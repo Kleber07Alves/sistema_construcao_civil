@@ -1,6 +1,5 @@
 import hashlib
 import hmac
-import os
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -8,13 +7,12 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
-
+from .config import settings
 from .database import get_db
 from .models import PerfilUsuario, Usuario
 
-JWT_SECRET = os.getenv("JWT_SECRET", "troque_essa_chave_em_producao")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "480"))
+
 
 security = HTTPBearer()
 
@@ -44,14 +42,9 @@ def verificar_senha(senha: str, senha_hash: str) -> bool:
 
 
 def criar_token(usuario: Usuario) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    payload = {
-        "sub": usuario.email,
-        "perfil": usuario.perfil.value,
-        "nome": usuario.nome,
-        "exp": expire,
-    }
-    return jwt.encode(payload, JWT_SECRET, algorithm=ALGORITHM)
+    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.access_token_expire_minutes)
+    ...
+    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
 def autenticar_usuario(db: Session, email: str, senha: str) -> Usuario | None:
@@ -72,7 +65,7 @@ def usuario_atual(
         detail="Token inválido ou expirado.",
     )
     try:
-        payload = jwt.decode(credenciais.credentials, JWT_SECRET, algorithms=[ALGORITHM])
+        payload = jwt.decode(credenciais.credentials, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
         email = payload.get("sub")
         if not email:
             raise erro
