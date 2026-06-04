@@ -1,10 +1,11 @@
+# backend/app/main.py
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
-from .database import Base, SessionLocal, engine
+from .database import SessionLocal
 from .jobs import iniciar_jobs, parar_jobs
 from .routers import auth, core, logistico, notificacoes, rh
 from .seed import criar_dados_iniciais
@@ -12,10 +13,7 @@ from .seed import criar_dados_iniciais
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    
     # ── Startup ──────────────────────────────────────────────────────────
-    Base.metadata.create_all(bind=engine)  # TODO: remover após configurar Alembic
-
     db = SessionLocal()
     try:
         criar_dados_iniciais(db)
@@ -39,7 +37,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_url],   # vem do .env, não hardcoded
+    allow_origins=[settings.frontend_url],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
