@@ -43,7 +43,13 @@ def verificar_senha(senha: str, senha_hash: str) -> bool:
 
 def criar_token(usuario: Usuario) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.access_token_expire_minutes)
-    ...
+    
+    
+    payload = {
+        "sub": usuario.email,  
+        "exp": expire
+    }
+    
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
