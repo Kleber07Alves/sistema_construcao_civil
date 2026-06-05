@@ -175,3 +175,62 @@ class EmailAlerta(BaseModel):
     assunto: str
     destinatario: str
     corpo: str
+
+
+class UsuarioAtualizar(BaseModel):
+    """
+    Atualização parcial de usuário.
+
+    Campos editáveis pelo gestor:
+      • nome, email, perfil, ativo  — aplicados diretamente no modelo
+      • senha                        — tratada separadamente no router:
+                                       é hasheada antes de persistir e
+                                       nunca exposta em UsuarioSaida
+    """
+    nome: str | None = None
+    email: EmailStr | None = None
+    perfil: PerfilUsuario | None = None
+    ativo: bool | None = None
+    senha: str | None = Field(default=None, min_length=6)
+
+
+class ObraAtualizar(BaseModel):
+    """
+    Atualização parcial de obra.
+    Todos os campos de ObraBase são opcionais aqui.
+    """
+    nome: str | None = None
+    endereco: str | None = None
+    status: StatusObra | None = None
+    prioridade: Prioridade | None = None
+    data_inicio: date | None = None
+
+
+class FornecedorAtualizar(BaseModel):
+    """
+    Atualização parcial de fornecedor.
+
+    Apenas os campos editáveis manualmente estão presentes.
+    Os campos calculados pelo pipeline ML (media_atraso_dias, taxa_atraso,
+    total_pedidos, desvio_atraso_dias) são gerenciados pelo APScheduler e
+    Não estão neste schema — o frontend nunca deve sobrescrevê-los.
+    """
+    nome: str | None = None
+    contato: str | None = None
+    observacao: str | None = None
+
+
+class VagaAtualizar(BaseModel):
+    """
+    Atualização parcial de vaga.
+
+    O campo `status` permite mover a vaga entre os estados:
+      aberta → pausada → encerrada (fluxo natural)
+    Vagas encerradas ainda aparecem no histórico — use DELETE para remover
+    fisicamente (apenas quando não houver mais interesse no registro).
+    """
+    titulo: str | None = None
+    tipo_obra: str | None = None
+    requisitos: str | None = None
+    habilidades: str | None = None
+    status: StatusVaga | None = None
