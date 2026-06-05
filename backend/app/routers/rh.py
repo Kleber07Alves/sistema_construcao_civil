@@ -1,21 +1,45 @@
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+# backend/app/routers/rh.py
+"""
+Router do Módulo de RH — Vagas e Candidatos.
+
+CRUD completo adicionado nesta versão:
+  Vagas:      PUT /{id} (atualização parcial), DELETE /{id} (hard-delete)
+  Candidatos: DELETE /{id} (hard-delete)
+"""
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from sqlalchemy.orm import Session
 
 from ..auth import exigir_perfis, usuario_atual
 from ..database import get_db
 from ..models import Candidato, PerfilUsuario, Usuario, Vaga
-from ..schemas import CandidatoCriar, CandidatoSaida, RankingCandidato, VagaCriar, VagaSaida
+from ..schemas import (
+    CandidatoCriar,
+    CandidatoSaida,
+    RankingCandidato,
+    VagaAtualizar,
+    VagaCriar,
+    VagaSaida,
+)
 from ..services.rh_nlp import calcular_score, extrair_texto_pdf, processar_curriculo
 
 router = APIRouter(prefix="/rh", tags=["Módulo de RH"])
 
 
+# =============================================================================
+# Vagas
+# =============================================================================
+
 @router.get("/vagas", response_model=list[VagaSaida])
-def listar_vagas(db: Session = Depends(get_db), _: Usuario = Depends(usuario_atual)):
+def listar_vagas(
+    db: Session = Depends(get_db),
+    _: Usuario = Depends(usuario_atual),
+):
     return db.query(Vaga).order_by(Vaga.id).all()
 
 
-@router.post("/vagas", response_model=VagaSaida)
+@router.post("/vagas", response_model=VagaSaida, status_code=201)
 def criar_vaga(
     dados: VagaCriar,
     db: Session = Depends(get_db),
@@ -28,12 +52,72 @@ def criar_vaga(
     return vaga
 
 
+@router.put("/vagas/{vaga_id}", response_model=VagaSaida)
+def atualizar_vaga(
+    vaga_id: int,
+    dados: VagaAtualizar,
+    db: Session = Depends(get_db),
+    _: Usuario = Depends(exigir_perfis(PerfilUsuario.gestor, PerfilUsuario.rh)),
+):
+    """
+    Atualização parcial de vaga.
+
+    Uso principal: mudar o status do ciclo de vida da vaga:
+      {"status": "pausada"}    — suspende temporariamente
+      {"status": "encerrada"}  — fecha definitivamente (mantém histórico)
+
+    Para remover o registro fisicamente, use DELETE após encerrar.
+    """
+    vaga = db.get(Vaga, vaga_id)
+    if not vaga:
+        raise HTTPException(status_code=404, detail="Vaga não encontrada.")
+
+    for campo, valor in dados.model_dump(exclude_unset=True).items():
+        setattr(vaga, campo, valor)
+
+    db.commit()
+    db.refresh(vaga)
+    return vaga
+
+
+@router.delete("/vagas/{vaga_id}", status_code=204)
+def excluir_vaga(
+    vaga_id: int,
+    db: Session = Depends(get_db),
+    _: Usuario = Depends(exigir_perfis(PerfilUsuario.gestor, PerfilUsuario.rh)),
+) -> Response:
+    """
+    Hard-delete de vaga.
+
+    Seguro para exclusão física: Vaga não possui FK de entrada (nenhuma outra
+    tabela referencia vagas.id), portanto não há risco de violação de constraint.
+
+    Fluxo recomendado antes de excluir:
+      1. PUT /vagas/{id} com {"status": "encerrada"}
+      2. DELETE /vagas/{id}  ← este endpoint
+    """
+    vaga = db.get(Vaga, vaga_id)
+    if not vaga:
+        raise HTTPException(status_code=404, detail="Vaga não encontrada.")
+
+    db.delete(vaga)
+    db.commit()
+    return Response(status_code=204)
+
+
+# =============================================================================
+# Candidatos
+# =============================================================================
+
 @router.get("/candidatos", response_model=list[CandidatoSaida])
-def listar_candidatos(db: Session = Depends(get_db), _: Usuario = Depends(usuario_atual)):
+def listar_candidatos(
+    db: Session = Depends(get_db),
+    _: Usuario = Depends(usuario_atual),
+):
     return db.query(Candidato).order_by(Candidato.id).all()
 
 
-@router.post("/candidatos", response_model=CandidatoSaida)
+@router.post("/candidatos", response_model=CandidatoSaida, status_code=201)
 def criar_candidato(
     dados: CandidatoCriar,
     db: Session = Depends(get_db),
@@ -55,7 +139,7 @@ def criar_candidato(
     return candidato
 
 
-@router.post("/candidatos/upload", response_model=CandidatoSaida)
+@router.post("/candidatos/upload", response_model=CandidatoSaida, status_code=201)
 async def upload_curriculo(
     nome: str = Form(...),
     email: str = Form(...),
@@ -65,6 +149,7 @@ async def upload_curriculo(
 ):
     if not arquivo.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Envie um currículo em PDF.")
+
     conteudo = await arquivo.read()
     texto = extrair_texto_pdf(conteudo)
     if not texto:
@@ -86,21 +171,60 @@ async def upload_curriculo(
     return candidato
 
 
+@router.delete("/candidatos/{candidato_id}", status_code=204)
+def excluir_candidato(
+    candidato_id: int,
+    db: Session = Depends(get_db),
+    _: Usuario = Depends(exigir_perfis(PerfilUsuario.gestor, PerfilUsuario.rh)),
+) -> Response:
+    """
+    Hard-delete de candidato.
+
+    Seguro para exclusão física: Candidato não possui FK de entrada
+    (nenhuma tabela referencia candidatos.id).
+
+    Obs: a exclusão remove permanentemente o currículo e resumo do
+    candidato. Considere usar o módulo de arquivo se precisar manter
+    histórico de processos seletivos anteriores.
+    """
+    candidato = db.get(Candidato, candidato_id)
+    if not candidato:
+        raise HTTPException(status_code=404, detail="Candidato não encontrado.")
+
+    db.delete(candidato)
+    db.commit()
+    return Response(status_code=204)
+
+
+# =============================================================================
+# Ranking e busca avançada
+# =============================================================================
+
 @router.get("/vagas/{vaga_id}/ranking", response_model=list[RankingCandidato])
-def ranking_vaga(vaga_id: int, db: Session = Depends(get_db), _: Usuario = Depends(usuario_atual)):
+def ranking_vaga(
+    vaga_id: int,
+    db: Session = Depends(get_db),
+    _: Usuario = Depends(usuario_atual),
+):
     vaga = db.get(Vaga, vaga_id)
     if not vaga:
         raise HTTPException(status_code=404, detail="Vaga não encontrada.")
 
     candidatos = db.query(Candidato).all()
-    ranking = []
-    for candidato in candidatos:
-        score, motivos = calcular_score(
-            vaga_habilidades=vaga.habilidades,
-            vaga_requisitos=vaga.requisitos,
-            candidato_habilidades=candidato.habilidades,
-            experiencia_anos=candidato.experiencia_anos,
+    ranking = [
+        RankingCandidato(
+            candidato=candidato,
+            score=score,
+            motivos=motivos,
         )
-        ranking.append(RankingCandidato(candidato=candidato, score=score, motivos=motivos))
-
+        for candidato in candidatos
+        for score, motivos in [
+            calcular_score(
+                vaga_habilidades=vaga.habilidades,
+                vaga_requisitos=vaga.requisitos,
+                candidato_habilidades=candidato.habilidades,
+                experiencia_anos=candidato.experiencia_anos,
+            )
+        ]
+    ]
     return sorted(ranking, key=lambda item: item.score, reverse=True)
