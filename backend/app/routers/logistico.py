@@ -112,6 +112,53 @@ def criar_fornecedor(
     return fornecedor
 
 
+@router.put("/fornecedores/{fornecedor_id}", response_model=FornecedorSaida)
+def editar_fornecedor(
+    fornecedor_id: int,
+    dados: FornecedorCriar,
+    db: Session = Depends(get_db),
+    _: Usuario = Depends(exigir_perfis(PerfilUsuario.gestor, PerfilUsuario.operador)),
+):
+    fornecedor = db.get(Fornecedor, fornecedor_id)
+
+    if not fornecedor:
+        raise HTTPException(status_code=404, detail="Fornecedor não encontrado.")
+
+    fornecedor.nome = dados.nome
+    fornecedor.contato = dados.contato
+    fornecedor.observacao = dados.observacao
+
+    db.commit()
+    db.refresh(fornecedor)
+    return fornecedor
+
+
+@router.delete("/fornecedores/{fornecedor_id}")
+def excluir_fornecedor(
+    fornecedor_id: int,
+    db: Session = Depends(get_db),
+    _: Usuario = Depends(exigir_perfis(PerfilUsuario.gestor)),
+):
+    fornecedor = db.get(Fornecedor, fornecedor_id)
+
+    if not fornecedor:
+        raise HTTPException(status_code=404, detail="Fornecedor não encontrado.")
+
+    possui_pedidos = db.query(Pedido).filter(Pedido.fornecedor_id == fornecedor_id).first()
+    possui_historico = db.query(HistoricoEntrega).filter(HistoricoEntrega.fornecedor_id == fornecedor_id).first()
+
+    if possui_pedidos or possui_historico:
+        raise HTTPException(
+            status_code=400,
+            detail="Não é possível excluir fornecedor com pedidos ou histórico vinculado.",
+        )
+
+    db.delete(fornecedor)
+    db.commit()
+
+    return {"mensagem": "Fornecedor excluído com sucesso."}
+
+
 # =============================================================================
 # Histórico de entregas
 # =============================================================================
@@ -123,6 +170,7 @@ def criar_historico(
     _: Usuario = Depends(exigir_perfis(PerfilUsuario.gestor, PerfilUsuario.operador)),
 ):
     fornecedor = db.get(Fornecedor, dados.fornecedor_id)
+
     if not fornecedor:
         raise HTTPException(status_code=404, detail="Fornecedor não encontrado.")
 
@@ -130,7 +178,9 @@ def criar_historico(
     db.add(historico)
     db.commit()
     db.refresh(historico)
+
     recalcular_alertas(db)
+
     return historico
 
 
@@ -139,39 +189,8 @@ def criar_historico(
 # =============================================================================
 
 @router.get("/pedidos", response_model=list[PedidoSaida])
-def listar_pedidos(
-    status: StatusPedido | None = None,
-    nivel_alerta: NivelAlerta | None = None,
-    obra_id: int | None = None,
-    db: Session = Depends(get_db),
-    _: Usuario = Depends(usuario_atual),
-):
-    """
-    Lista pedidos com filtros opcionais aplicados diretamente no banco.
-
-    Query params aceitos:
-      ?status=pendente
-      ?status=entregue
-      ?status=atrasado
-      ?nivel_alerta=vermelho
-      ?nivel_alerta=amarelo
-      ?nivel_alerta=verde
-      ?obra_id=1
-
-    Todos são combináveis: ?status=pendente&nivel_alerta=vermelho&obra_id=2
-    """
-    query = db.query(Pedido)
-
-    if status is not None:
-        query = query.filter(Pedido.status == status)
-
-    if nivel_alerta is not None:
-        query = query.filter(Pedido.nivel_alerta == nivel_alerta)
-
-    if obra_id is not None:
-        query = query.filter(Pedido.obra_id == obra_id)
-
-    return query.order_by(Pedido.id).all()
+def listar_pedidos(db: Session = Depends(get_db), _: Usuario = Depends(usuario_atual)):
+    return db.query(Pedido).order_by(Pedido.id).all()
 
 
 @router.post("/pedidos", response_model=PedidoSaida, status_code=201)
@@ -181,21 +200,52 @@ def criar_pedido(
     _: Usuario = Depends(exigir_perfis(PerfilUsuario.gestor, PerfilUsuario.operador)),
 ):
     fornecedor = db.get(Fornecedor, dados.fornecedor_id)
+    obra = db.get(Obra, dados.obra_id)
     if not fornecedor:
         raise HTTPException(status_code=404, detail="Fornecedor não encontrado.")
-
-    obra = db.get(Obra, dados.obra_id)
     if not obra:
         raise HTTPException(status_code=404, detail="Obra não encontrada.")
 
+    if dados.data_prevista < dados.data_pedido:
+        raise HTTPException(
+            status_code=400,
+            detail="A data prevista não pode ser anterior à data do pedido.",
+        )
+
     pedido = Pedido(**dados.model_dump(), status=StatusPedido.pendente)
+
     db.add(pedido)
     db.commit()
     db.refresh(pedido)
-
     recalcular_alertas(db)
     db.refresh(pedido)
+
     return pedido
+
+
+@router.delete("/pedidos/{pedido_id}")
+def excluir_pedido(
+    pedido_id: int,
+    db: Session = Depends(get_db),
+    _: Usuario = Depends(exigir_perfis(PerfilUsuario.gestor, PerfilUsuario.operador)),
+):
+    pedido = db.get(Pedido, pedido_id)
+
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido não encontrado.")
+
+    if pedido.status != StatusPedido.pendente:
+        raise HTTPException(
+            status_code=400,
+            detail="Só é possível excluir pedidos pendentes.",
+        )
+
+    db.delete(pedido)
+    db.commit()
+
+    recalcular_alertas(db)
+
+    return {"mensagem": "Pedido excluído com sucesso."}
 
 
 @router.put("/pedidos/{pedido_id}/entregar", response_model=PedidoSaida)
@@ -206,15 +256,9 @@ def entregar_pedido(
     _: Usuario = Depends(exigir_perfis(PerfilUsuario.gestor, PerfilUsuario.operador)),
 ):
     pedido = db.get(Pedido, pedido_id)
+
     if not pedido:
         raise HTTPException(status_code=404, detail="Pedido não encontrado.")
-
-    if pedido.status != StatusPedido.pendente:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Apenas pedidos 'pendente' podem ser entregues. Status atual: '{pedido.status.value}'.",
-        )
-
     return registrar_entrega(db, pedido, dados.data_real_entrega)
 
 
@@ -260,34 +304,34 @@ def recalcular(
 @router.get("/alertas", response_model=list[AlertaSaida])
 def listar_alertas(
     obra_id: int | None = None,
+    nivel_alerta: NivelAlerta | None = None,
     db: Session = Depends(get_db),
     _: Usuario = Depends(usuario_atual),
 ):
-    """
-    Retorna todos os pedidos pendentes como alertas ordenados por severidade.
-
-    Query params:
-      ?obra_id=1  — filtra alertas de uma obra específica
-    """
-    return _buscar_alertas_pedidos(db, obra_id=obra_id)
+    query = db.query(Pedido).filter(Pedido.status == StatusPedido.pendente)
+    if obra_id:
+        query = query.filter(Pedido.obra_id == obra_id)
+    pedidos = query.order_by(Pedido.nivel_alerta, Pedido.data_prevista).all()
+    return [
+        AlertaSaida(
+            pedido_id=p.id,
+            obra=p.obra.nome,
+            fornecedor=p.fornecedor.nome,
+            tipo_insumo=p.tipo_insumo,
+            prioridade=p.prioridade,
+            data_prevista=p.data_prevista,
+            prob_atraso=p.prob_atraso,
+            nivel_alerta=p.nivel_alerta,
+            texto_alerta=p.texto_alerta,
+        )
+        for p in pedidos
+    ]
 
 
 @router.get("/dashboard", response_model=DashboardLogistico)
-def dashboard_logistico(
-    db: Session = Depends(get_db),
-    _: Usuario = Depends(usuario_atual),
-):
-    
-    #Retorna os dados consolidados para o painel do módulo logístico.
-    
-    pedidos_ativos = (
-        db.query(Pedido)
-        .filter(Pedido.status == StatusPedido.pendente)
-        .all()
-    )
-
-    alertas = _buscar_alertas_pedidos(db)
-
+def dashboard_logistico(db: Session = Depends(get_db), _: Usuario = Depends(usuario_atual)):
+    pedidos_ativos = db.query(Pedido).filter(Pedido.status == StatusPedido.pendente).all()
+    alertas = listar_alertas(db=db, _=_)
     return DashboardLogistico(
         total_pedidos_ativos=len(pedidos_ativos),
         alertas_vermelhos=sum(
