@@ -21,6 +21,7 @@ from ..models import (
 from ..schemas import (
     AlertaSaida,
     DashboardLogistico,
+    FornecedorAtualizar,
     FornecedorCriar,
     FornecedorSaida,
     HistoricoCriar,
@@ -107,6 +108,35 @@ def criar_fornecedor(
 ):
     fornecedor = Fornecedor(**dados.model_dump())
     db.add(fornecedor)
+    db.commit()
+    db.refresh(fornecedor)
+    return fornecedor
+
+@router.put("/fornecedores/{fornecedor_id}", response_model=FornecedorSaida)
+def atualizar_fornecedor(
+    fornecedor_id: int,
+    dados: FornecedorAtualizar,
+    db: Session = Depends(get_db),
+    _: Usuario = Depends(exigir_perfis(PerfilUsuario.gestor, PerfilUsuario.operador)),
+):
+    """
+    Atualização parcial de fornecedor.
+
+    Campos editáveis: nome, contato, observacao.
+
+    Campos NÃO editáveis via este endpoint (gerenciados pelo pipeline ML):
+      media_atraso_dias, taxa_atraso, total_pedidos, desvio_atraso_dias.
+    Esses valores são recalculados automaticamente pelo APScheduler com base
+    no histórico real de entregas — sobrescrevê-los manualmente invalidaria
+    as predições do modelo logístico.
+    """
+    fornecedor = db.get(Fornecedor, fornecedor_id)
+    if not fornecedor:
+        raise HTTPException(status_code=404, detail="Fornecedor não encontrado.")
+
+    for campo, valor in dados.model_dump(exclude_unset=True).items():
+        setattr(fornecedor, campo, valor)
+
     db.commit()
     db.refresh(fornecedor)
     return fornecedor
