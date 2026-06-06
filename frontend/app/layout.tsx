@@ -1,5 +1,8 @@
+
+// Permanece Server Component — não adicionar "use client" aqui.
 import type { Metadata } from "next";
-import Link from "next/link";
+import { Providers } from "@/components/Providers";
+import { NavHeader } from "@/components/NavHeader";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -11,18 +14,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="pt-BR">
       <body>
-        <header className="header">
-          <div className="header-content">
-            <strong>Sistema de Gestão — Construção Civil</strong>
-            <nav className="nav">
-              <Link href="/">Dashboard</Link>
-              <Link href="/obras">Obras</Link>
-              <Link href="/logistico">Logística</Link>
-              <Link href="/rh">RH</Link>
-            </nav>
-          </div>
-        </header>
-        {children}
+        <Providers>
+          <NavHeader />
+          {children}
+        </Providers>
       </body>
     </html>
   );
