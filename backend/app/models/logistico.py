@@ -34,7 +34,14 @@ class Fornecedor(Base):
     desvio_atraso_dias: Mapped[float]      = mapped_column(Float, default=0.0)
     observacao:         Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    historicos: Mapped[list[HistoricoEntrega]] = relationship("HistoricoEntrega", back_populates="fornecedor")
+    # ── Relacionamentos ────────────────────────────────────────────────────
+    historicos: Mapped[list[HistoricoEntrega]] = relationship(
+        "HistoricoEntrega", back_populates="fornecedor"
+    )
+    
+    pedidos: Mapped[list[Pedido]] = relationship(
+        "Pedido", back_populates="fornecedor"
+    )
 
 
 class HistoricoEntrega(Base):
@@ -66,4 +73,8 @@ class Pedido(Base):
     nivel_alerta:      Mapped[NivelAlerta]  = mapped_column(SQLEnum(NivelAlerta), default=NivelAlerta.verde)
     texto_alerta:      Mapped[str]          = mapped_column(String(255), default="")
 
+    # ── Relacionamentos ────────────────────────────────────────────────────
     obra: Mapped[Obra] = relationship("Obra", back_populates="pedidos")
+
+    
+    fornecedor: Mapped[Fornecedor] = relationship("Fornecedor", back_populates="pedidos")
