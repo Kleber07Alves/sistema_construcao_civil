@@ -1,4 +1,7 @@
+
 services:
+
+  # ── Banco de dados ──────────────────────────────────────────────────────
   db:
     image: postgres:16-alpine
     container_name: construcao_civil_db
@@ -15,36 +18,53 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
+  # ── Backend FastAPI ─────────────────────────────────────────────────────
   backend:
     build: ./backend
     container_name: construcao_civil_backend
+    env_file: .env               # carrega JWT_SECRET, OPENAI_API_KEY, etc.
     environment:
+      # Sobrescreve variáveis que precisam do hostname Docker interno
       DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/construcao_civil
-      JWT_SECRET: troque_essa_chave_em_producao
-      ACCESS_TOKEN_EXPIRE_MINUTES: 480
-      FRONTEND_URL: http://localhost:3000
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
     ports:
       - "8000:8000"
-    volumes:
-      - ./backend:/app
+    # volumes:                   # ← DEV ONLY: descomente para hot-reload
+    #   - ./backend:/app         #   (remove a necessidade de rebuild a cada mudança)
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      # curl é instalado no Dockerfile de produção
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s   # tempo para migrations + seed completarem
+    restart: unless-stopped
 
+  # ── Frontend Next.js ────────────────────────────────────────────────────
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+  
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     container_name: construcao_civil_frontend
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
     ports:
       - "3000:3000"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-      - /app/.next
+ 
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy   # aguarda o backend estar saudável
+    restart: unless-stopped
 
 volumes:
   postgres_data:
