@@ -1,6 +1,7 @@
 "use client";
 // frontend/app/rh/page.tsx
 import { useCallback, useEffect, useState } from "react";
+import type { CSSProperties } from "react"; // ← fix: React.CSSProperties sem import causava erro no build
 import { apiJson } from "@/lib/api";
 import { usePerfil } from "@/components/ProtectedRoute";
 import type { Candidato, RankingCandidato, StatusVaga, Vaga } from "@/types";
@@ -12,13 +13,13 @@ const STATUS_VAGA_LABEL: Record<StatusVaga, string> = {
   encerrada: "Encerrada",
 };
 
-const STATUS_VAGA_STYLE: Record<StatusVaga, React.CSSProperties> = {
+const STATUS_VAGA_STYLE: Record<StatusVaga, CSSProperties> = {
   aberta:    { background: "#dcfce7", color: "#166534" },
   pausada:   { background: "#fef3c7", color: "#92400e" },
   encerrada: { background: "#f3f4f6", color: "#6b7280" },
 };
 
-const BADGE_STATUS: React.CSSProperties = {
+const BADGE_STATUS: CSSProperties = {
   display: "inline-block",
   padding: "3px 10px",
   borderRadius: 999,
@@ -33,19 +34,16 @@ export default function RhPage() {
   const [vagas,      setVagas]      = useState<Vaga[]>([]);
   const [candidatos, setCandidatos] = useState<Candidato[]>([]);
   const [ranking,    setRanking]    = useState<RankingCandidato[]>([]);
-  const [vagaAtiva,  setVagaAtiva]  = useState<number | null>(null); // vaga selecionada para ranking
+  const [vagaAtiva,  setVagaAtiva]  = useState<number | null>(null);
 
   const [carregando, setCarregando] = useState(false);
   const [salvando,   setSalvando]   = useState(false);
   const [erro,       setErro]       = useState("");
   const [sucesso,    setSucesso]    = useState("");
-
-  // Status sendo alterado inline (id da vaga sendo editada, ou null)
   const [alterandoStatus, setAlterandoStatus] = useState<number | null>(null);
 
   function msg(e?: string, s?: string) { setErro(e ?? ""); setSucesso(s ?? ""); }
 
-  // ── Carregar ranking ────────────────────────────────────────────────────
   const carregarRanking = useCallback(async (vagaId: number) => {
     try {
       setRanking(await apiJson<RankingCandidato[]>(`/rh/vagas/${vagaId}/ranking`));
@@ -54,7 +52,6 @@ export default function RhPage() {
     }
   }, []);
 
-  // ── Carregar tudo ───────────────────────────────────────────────────────
   const carregar = useCallback(async () => {
     setCarregando(true);
     try {
@@ -64,8 +61,6 @@ export default function RhPage() {
       ]);
       setVagas(vagasData);
       setCandidatos(candidatosData);
-
-      // Usa a vaga já selecionada pelo usuário, ou a primeira disponível
       const primId = vagasData[0]?.id ?? null;
       const idUsado = vagaAtiva ?? primId;
       if (idUsado) {
@@ -85,14 +80,12 @@ export default function RhPage() {
 
   useEffect(() => { void carregar(); }, [carregar]);
 
-  // ── Selecionar vaga para ranking ────────────────────────────────────────
   async function selecionarVaga(id: number) {
     setVagaAtiva(id);
     msg();
     await carregarRanking(id);
   }
 
-  // ── Alterar status da vaga ──────────────────────────────────────────────
   async function alterarStatus(vagaId: number, novoStatus: StatusVaga) {
     setAlterandoStatus(vagaId);
     msg();
@@ -110,7 +103,6 @@ export default function RhPage() {
     }
   }
 
-  // ── Excluir vaga ────────────────────────────────────────────────────────
   async function excluirVaga(vaga: Vaga) {
     if (!confirm(
       `Excluir a vaga "${vaga.titulo}"?\n\n` +
@@ -120,7 +112,6 @@ export default function RhPage() {
     setSalvando(true);
     try {
       await apiJson(`/rh/vagas/${vaga.id}`, { method: "DELETE" });
-      // Se era a vaga ativa no ranking, limpa a seleção
       if (vagaAtiva === vaga.id) { setVagaAtiva(null); setRanking([]); }
       msg(undefined, `Vaga "${vaga.titulo}" excluída.`);
       await carregar();
@@ -131,7 +122,6 @@ export default function RhPage() {
     }
   }
 
-  // ── Excluir candidato ───────────────────────────────────────────────────
   async function excluirCandidato(candidato: Candidato) {
     if (!confirm(
       `Excluir permanentemente o candidato "${candidato.nome}"?\n` +
@@ -142,7 +132,6 @@ export default function RhPage() {
     try {
       await apiJson(`/rh/candidatos/${candidato.id}`, { method: "DELETE" });
       msg(undefined, `Candidato "${candidato.nome}" removido.`);
-      // Recalcula ranking se o candidato fazia parte do ranking ativo
       if (vagaAtiva) await carregarRanking(vagaAtiva);
       await carregar();
     } catch (e) {
@@ -152,13 +141,11 @@ export default function RhPage() {
     }
   }
 
-  // ── Render ──────────────────────────────────────────────────────────────
   const vagaRankingNome = vagas.find((v) => v.id === vagaAtiva)?.titulo;
 
   return (
     <main className="container">
 
-      {/* Cabeçalho */}
       <section className="card">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
           <div>
@@ -175,7 +162,6 @@ export default function RhPage() {
         {sucesso && <p className="success" style={{ marginTop: 12 }}>{sucesso}</p>}
       </section>
 
-      {/* Vagas */}
       <h2 className="section-title">
         Vagas{" "}
         <span className="muted" style={{ fontSize: 14, fontWeight: 400 }}>({vagas.length})</span>
@@ -213,7 +199,6 @@ export default function RhPage() {
                     {STATUS_VAGA_LABEL[vaga.status as StatusVaga] ?? vaga.status}
                   </span>
                 </td>
-                {/* Alterar status — dropdown inline para gestor/rh */}
                 {podeGerenciar && (
                   <td>
                     <select
@@ -229,7 +214,6 @@ export default function RhPage() {
                     </select>
                   </td>
                 )}
-                {/* Selecionar para ranking */}
                 <td>
                   <button
                     className={vagaAtiva === vaga.id ? "button" : "button secondary"}
@@ -239,7 +223,6 @@ export default function RhPage() {
                     {vagaAtiva === vaga.id ? "✓ Selecionada" : "Ver ranking"}
                   </button>
                 </td>
-                {/* Excluir vaga */}
                 {podeGerenciar && (
                   <td>
                     <button
@@ -258,7 +241,6 @@ export default function RhPage() {
         </table>
       </div>
 
-      {/* Ranking da vaga selecionada */}
       <h2 className="section-title">
         Ranking{vagaRankingNome ? ` — ${vagaRankingNome}` : ""}
         {!vagaAtiva && (
@@ -270,12 +252,7 @@ export default function RhPage() {
       <table className="table">
         <thead>
           <tr>
-            <th>#</th>
-            <th>Candidato</th>
-            <th>Cargo</th>
-            <th>Experiência</th>
-            <th>Score</th>
-            <th>Motivos</th>
+            <th>#</th><th>Candidato</th><th>Cargo</th><th>Experiência</th><th>Score</th><th>Motivos</th>
           </tr>
         </thead>
         <tbody>
@@ -293,13 +270,11 @@ export default function RhPage() {
               <td>{item.candidato.cargo ?? "—"}</td>
               <td>{item.candidato.experiencia_anos.toFixed(1)}a</td>
               <td>
-                <span
-                  style={{
-                    fontWeight: 700,
-                    color: item.score >= 70 ? "var(--success)" :
-                           item.score >= 40 ? "var(--warning)" : "var(--danger)",
-                  }}
-                >
+                <span style={{
+                  fontWeight: 700,
+                  color: item.score >= 70 ? "var(--success)" :
+                         item.score >= 40 ? "var(--warning)" : "var(--danger)",
+                }}>
                   {item.score}%
                 </span>
               </td>
@@ -309,15 +284,12 @@ export default function RhPage() {
         </tbody>
       </table>
 
-      {/* Candidatos */}
       <h2 className="section-title">
         Candidatos{" "}
         <span className="muted" style={{ fontSize: 14, fontWeight: 400 }}>({candidatos.length})</span>
       </h2>
       <div className="grid">
-        {candidatos.length === 0 && (
-          <p className="muted">Nenhum candidato cadastrado.</p>
-        )}
+        {candidatos.length === 0 && <p className="muted">Nenhum candidato cadastrado.</p>}
         {candidatos.map((c) => (
           <article className="card" key={c.id}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -325,7 +297,6 @@ export default function RhPage() {
                 <h3 style={{ margin: "0 0 2px" }}>{c.nome}</h3>
                 <p className="muted" style={{ margin: 0, fontSize: 13 }}>{c.email}</p>
               </div>
-              {/* Botão de exclusão — visível apenas para gestor/rh */}
               {podeGerenciar && (
                 <button
                   className="button danger"
@@ -338,16 +309,9 @@ export default function RhPage() {
                 </button>
               )}
             </div>
-
-            <p style={{ margin: "10px 0 4px" }}>
-              <strong>Cargo:</strong> {c.cargo ?? "—"}
-            </p>
-            <p style={{ margin: "0 0 4px", fontSize: 13 }}>
-              <strong>Exp.:</strong> {c.experiencia_anos.toFixed(1)} ano(s)
-            </p>
-            <p style={{ margin: "0 0 4px", fontSize: 13 }}>
-              <strong>Habilidades:</strong> {c.habilidades || "—"}
-            </p>
+            <p style={{ margin: "10px 0 4px" }}><strong>Cargo:</strong> {c.cargo ?? "—"}</p>
+            <p style={{ margin: "0 0 4px", fontSize: 13 }}><strong>Exp.:</strong> {c.experiencia_anos.toFixed(1)} ano(s)</p>
+            <p style={{ margin: "0 0 4px", fontSize: 13 }}><strong>Habilidades:</strong> {c.habilidades || "—"}</p>
             {c.resumo && (
               <p style={{ margin: "8px 0 0", fontSize: 13, color: "var(--muted)", borderTop: "1px solid var(--border)", paddingTop: 8 }}>
                 {c.resumo}

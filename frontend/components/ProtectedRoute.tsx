@@ -1,15 +1,13 @@
 "use client";
-// ─────────────────────────────────────────────────────────────────────────────
-// Guarda client-side de rotas e elementos da UI por perfil de usuário.
-// ─────────────────────────────────────────────────────────────────────────────
-
+// frontend/components/ProtectedRoute.tsx
+import type { ReactNode } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import type { PerfilUsuario } from "@/types";
 
 interface ProtectedRouteProps {
   perfisPermitidos: PerfilUsuario[];
-  children: React.ReactNode;
-  fallback?: React.ReactNode;
+  children: ReactNode;
+  fallback?: ReactNode;
 }
 
 export function ProtectedRoute({
@@ -19,10 +17,7 @@ export function ProtectedRoute({
 }: ProtectedRouteProps) {
   const { usuario, loading } = useAuth();
 
-  // Aguarda a hidratação do AuthContext para evitar flashes indesejados na tela
-  if (loading) {
-    return null;
-  }
+  if (loading) return null;
 
   const temAcesso =
     usuario !== null && perfisPermitidos.includes(usuario.perfil);
@@ -31,7 +26,6 @@ export function ProtectedRoute({
     if (fallback === null) return null;
     if (fallback !== undefined) return <>{fallback}</>;
 
-    // Painel de acesso negado padrão da aplicação
     return (
       <div className="card" style={{ borderLeft: "4px solid #ef4444" }}>
         <h3 style={{ marginBottom: 8 }}>Acesso restrito</h3>
@@ -49,7 +43,7 @@ export function ProtectedRoute({
   return <>{children}</>;
 }
 
-/** Hook auxiliar para verificações imperativas em lógica condicional inline */
+/** Hook auxiliar para verificações imperativas em lógica condicional inline. */
 export function usePerfil(perfisPermitidos: PerfilUsuario[]): boolean {
   const { usuario, loading } = useAuth();
   if (loading || !usuario) return false;
