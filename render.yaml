@@ -35,6 +35,10 @@ services:
       - key: ANTHROPIC_API_KEY
         value: ""
 
+
       
       - key: SMTP_HOST
         value: ""
+
+
+        
