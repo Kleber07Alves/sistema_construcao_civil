@@ -1,0 +1,40 @@
+services:
+  - type: web
+    name: construcao-civil-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    region: oregon
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # Ambiente de produção — ativa validações de segurança no config.py
+      - key: ENVIRONMENT
+        value: production
+
+      # Token expire em 8h (480 min)
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "480"
+
+      # Render gera automaticamente uma chave segura (>32 chars)
+      - key: JWT_SECRET
+        generateValue: true
+
+      
+      - key: DATABASE_URL
+        sync: false
+
+      
+      - key: FRONTEND_URL
+        sync: false
+
+      
+      - key: OPENAI_API_KEY
+        value: ""
+      - key: ANTHROPIC_API_KEY
+        value: ""
+
+      
+      - key: SMTP_HOST
+        value: ""
