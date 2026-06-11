@@ -1,14 +1,16 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   /**
-   * output: 'standalone' gera uma pasta .next/standalone com apenas os
-   * arquivos necessários para rodar em produção (sem node_modules completo).
-   * Isso reduz a imagem Docker final de ~800 MB para ~200 MB.
+   * output: 'standalone' é para deploys Docker (imagem auto-contida, ~200 MB).
+   * No Vercel esta opção NÃO deve ser usada — o Vercel tem seu próprio
+   * sistema de otimização e output. Usar standalone no Vercel quebra o build.
    *
-   * O frontend/Dockerfile multi-stage copia dessa pasta para a imagem final.
-   * Mais: https://nextjs.org/docs/app/api-reference/next-config-js/output
+   * Solução: ativa standalone APENAS quando a variável DOCKER_BUILD=true
+   * está presente (definida no frontend/Dockerfile antes de npm run build).
+   * No Vercel essa variável não existe → output fica undefined → comportamento
+   * padrão correto do Vercel.
    */
-  output: "standalone",
+  ...(process.env.DOCKER_BUILD === "true" && { output: "standalone" }),
 };
 
 export default nextConfig;
