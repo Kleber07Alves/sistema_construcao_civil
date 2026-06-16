@@ -1,502 +1,334 @@
 # Sistema de Gestão — Construção Civil
 
-MVP funcional de um sistema modular para gestão na construção civil, com foco em obras, logística de materiais, triagem de candidatos e alertas operacionais.
+Sistema modular para gestão na construção civil, com foco em **obras**, **logística de materiais com previsão de risco de atraso** e **triagem de candidatos com NLP**. Desenvolvido como **projeto de extensão universitária** (Análise e Desenvolvimento de Sistemas) para uso por uma empresa real de construção civil.
 
-O projeto foi desenvolvido para fins acadêmicos no curso de Análise e Desenvolvimento de Sistemas, mantendo uma arquitetura simples o suficiente para estudo, mas já organizada com backend, frontend, banco de dados, autenticação, migrations e Docker.
+🔗 **Sistema em produção:** https://sistema-construcao-civil.vercel.app/login
+
+> **Status:** MVP funcional publicado, em fase de correção e refinamento. O banco é populado automaticamente com **dados de demonstração** (seed) no primeiro start.
+
+---
+
+## Índice
+
+- [Visão geral](#visão-geral)
+- [Capturas de tela](#capturas-de-tela)
+- [Arquitetura](#arquitetura)
+- [Stack tecnológica](#stack-tecnológica)
+- [Módulos](#módulos)
+- [Como o risco de atraso é calculado](#como-o-risco-de-atraso-é-calculado)
+- [Estrutura de pastas](#estrutura-de-pastas)
+- [Rodando localmente (Docker)](#rodando-localmente-docker)
+- [Rodando sem Docker](#rodando-sem-docker)
+- [Variáveis de ambiente](#variáveis-de-ambiente)
+- [Usuários de demonstração](#usuários-de-demonstração)
+- [Documentação da API](#documentação-da-api)
+- [Testes](#testes)
+- [Deploy em produção](#deploy-em-produção)
+- [Controle de acesso (RBAC)](#controle-de-acesso-rbac)
 
 ---
 
 ## Visão geral
 
-O sistema busca apoiar dois problemas principais em empresas de construção civil:
+O sistema ataca dois problemas recorrentes em empresas de construção civil:
 
-1. **Atrasos no recebimento de materiais**, por meio do controle de pedidos, fornecedores, histórico de entregas e alertas de risco.
-2. **Dificuldade na triagem de mão de obra**, por meio do cadastro de vagas, candidatos, extração de dados de currículos e ranking de compatibilidade.
+1. **Atrasos no recebimento de materiais** — através do controle de pedidos, fornecedores, histórico de entregas e geração automática de alertas de risco (vermelho / amarelo / verde) por pedido.
+2. **Dificuldade na triagem de mão de obra** — através do cadastro de vagas, processamento de currículos com NLP (spaCy + PyMuPDF), extração de cargo/experiência/habilidades e ranking de compatibilidade candidato × vaga.
+
+Tudo é organizado sobre uma base administrativa (**Core**) com autenticação JWT e controle de acesso por perfil.
 
 ---
 
-## Stack utilizada
+## Capturas de tela
+
+> As imagens ficam em `docs/screenshots/`. Coloque os arquivos `.png` nessa pasta com os nomes abaixo.
+
+### Login
+![Tela de login](docs/screenshots/tela-login-scc.png)
+
+### Dashboard geral
+Painel consolidado com pedidos ativos, alertas vermelhos, obras cadastradas, vagas abertas, gráfico de alertas por nível e principais alertas.
+![Dashboard](docs/screenshots/tela-dashbord-scc.png)
+
+### Obras
+Listagem e gestão completa (criar, editar, excluir) das obras.
+![Obras](docs/screenshots/tela-obras-scc.png)
+
+### Módulo Logístico
+Cadastro de fornecedores e pedidos, filtros, tabela de pedidos com probabilidade e nível de alerta, e estatísticas calculadas por fornecedor.
+![Logística](docs/screenshots/tela-logistica-completa-scc.png)
+
+### Módulo de RH
+Vagas, ranking de candidatos por compatibilidade e cards de candidatos com resumo gerado automaticamente.
+![RH](docs/screenshots/tela-rh-completo-scc.png)
+
+---
+
+## Arquitetura
+
+```
+┌──────────────────────────┐         ┌──────────────────────────────┐
+│   Frontend (Next.js 16)  │  HTTPS  │   Backend (FastAPI / Python) │
+│   React 19 + TypeScript  │ ──────► │   API REST + JWT + RBAC       │
+│   Recharts • proxy.ts     │         │   Core • Logística • RH       │
+└──────────────────────────┘         │   Notificações • ML • NLP     │
+        Vercel                        └───────────────┬──────────────┘
+                                                      │ SQLAlchemy 2.0
+                                                      ▼
+                                       ┌──────────────────────────────┐
+                                       │   PostgreSQL (Neon)           │
+                                       │   migrações via Alembic       │
+                                       └──────────────────────────────┘
+```
+
+- **API REST central** (FastAPI) consumida pelo frontend e pelos módulos internos.
+- **Modelos e schemas modularizados** por domínio (`core` / `logistico` / `rh`), reexportados por pacotes `__init__.py` para manter os imports estáveis.
+- **APScheduler** executa um job diário (07h, America/Sao_Paulo) que recalcula as estatísticas dos fornecedores e os alertas dos pedidos pendentes.
+- **Configuração centralizada** via `pydantic-settings` (`app/config.py`), que **recusa subir em produção** com configurações inseguras (ex.: `JWT_SECRET` padrão ou `DATABASE_URL` apontando para localhost).
+
+---
+
+## Stack tecnológica
 
 ### Backend
-
-* Python 3.11
-* FastAPI
-* SQLAlchemy
-* Alembic
-* PostgreSQL
-* Pydantic
-* Pydantic Settings
-* JWT com `python-jose`
-* Pandas
-* PyMuPDF
-* spaCy
-* APScheduler
-* Pytest
+| Camada | Ferramenta |
+| --- | --- |
+| Linguagem | Python 3.11 |
+| API | FastAPI 0.115 + Uvicorn |
+| ORM / Migrações | SQLAlchemy 2.0 + Alembic |
+| Banco | PostgreSQL (Neon em produção) |
+| Validação / Config | Pydantic 2 + pydantic-settings |
+| Autenticação | JWT (`python-jose`) + hashing **PBKDF2-SHA256** (sem dependência de bcrypt) |
+| Ciência de dados | Pandas (agregação do histórico) |
+| ML | scikit-learn *(dependência reservada para evolução do modelo)* |
+| NLP | spaCy `pt_core_news_sm` + PyMuPDF |
+| Agendamento | APScheduler |
+| Testes | Pytest + httpx |
 
 ### Frontend
-
-* Next.js 14
-* React
-* TypeScript
-* Recharts
-* CSS global
+| Camada | Ferramenta |
+| --- | --- |
+| Framework | Next.js 16 (App Router) |
+| UI | React 19 + TypeScript |
+| Gráficos | Recharts |
+| Estilo | CSS global (`app/globals.css`) |
+| Proteção de rotas | `proxy.ts` (convenção do Next.js 16, antiga `middleware.ts`) + `AuthContext` |
 
 ### Infraestrutura
-
-* Docker
-* Docker Compose
-* PostgreSQL em container
+- Docker + Docker Compose (ambiente local unificado: db + backend + frontend)
+- Neon (PostgreSQL gerenciado), Render (backend Docker), Vercel (frontend)
 
 ---
 
-## Módulos do sistema
+## Módulos
 
-### Core
+### Core — Gestão
+- Cadastro de **usuários** com perfis (gestor, operador, RH) e soft-delete (desativação).
+- Cadastro e gestão de **obras** (CRUD completo, com guarda de integridade na exclusão).
+- Autenticação JWT e controle de acesso por perfil.
 
-Responsável pela base administrativa do sistema.
+### Logístico — Dados + Risco de atraso
+- **Fornecedores** com estatísticas calculadas automaticamente (média de atraso, desvio padrão, taxa de atraso, total de entregas).
+- **Pedidos** de materiais (data do pedido, entrega prevista, entrega real, insumo, fornecedor, obra, prioridade, observação).
+- **Histórico de entregas** por fornecedor/insumo, com mês de referência (sazonalidade).
+- Cálculo de **probabilidade de atraso** e classificação em **vermelho / amarelo / verde**, exibidos no dashboard.
+- Registro de entrega que fecha o ciclo de vida do pedido e dispara o recálculo.
 
-Funcionalidades atuais:
-
-* Cadastro de usuários
-* Listagem de usuários
-* Cadastro de obras
-* Listagem de obras
-* Controle de acesso por perfil
-
-Perfis disponíveis:
-
-* `gestor`
-* `operador`
-* `rh`
-
----
-
-### Logístico
-
-Responsável pelo controle de fornecedores, pedidos de materiais e alertas de atraso.
-
-Funcionalidades atuais:
-
-* Cadastro de fornecedores
-* Listagem de fornecedores
-* Edição de fornecedores
-* Exclusão de fornecedores com regra de segurança
-* Cadastro de histórico de entregas
-* Cadastro de pedidos
-* Listagem de pedidos
-* Filtros por status, obra, fornecedor e nível de alerta
-* Edição de pedidos
-* Exclusão de pedidos pendentes
-* Registro de entrega de pedidos
-* Cálculo de média de atraso por fornecedor
-* Cálculo de taxa de atraso por fornecedor
-* Cálculo de desvio padrão por fornecedor
-* Geração de alertas por nível:
-
-  * verde
-  * amarelo
-  * vermelho
-* Dashboard logístico com contagem de pedidos e alertas
-
----
-
-### RH
-
-Responsável por vagas, candidatos e ranking de compatibilidade.
-
-Funcionalidades atuais:
-
-* Cadastro de vagas
-* Listagem de vagas
-* Cadastro manual de candidatos
-* Upload de currículo em PDF
-* Extração de texto do currículo com PyMuPDF
-* Extração simples de cargo, experiência e habilidades
-* Ranking de candidatos por vaga
-* Resumo local do candidato
-
-Observação: a integração real com LLM ainda não está implementada. Atualmente existe configuração prevista para chave OpenAI, mas o resumo usado pelo sistema é local.
-
----
+### RH — NLP + Triagem
+- Cadastro de **vagas** com requisitos e habilidades, e ciclo de vida (aberta / pausada / encerrada).
+- Cadastro de **candidatos** e **upload de currículo em PDF** (extração de texto com PyMuPDF).
+- Extração de **cargo, experiência e habilidades** com spaCy (com *fallback* transparente para regex caso o modelo não esteja disponível).
+- **Resumo automático** local do candidato e **ranking de compatibilidade** por vaga.
 
 ### Notificações
-
-Responsável por alertas operacionais.
-
-Funcionalidades atuais:
-
-* Geração de e-mails simulados para alertas logísticos
-* Endpoint para visualizar alertas de e-mail
-* Endpoint para simular envio de alertas
-* Job diário com APScheduler para recalcular alertas logísticos
-
-Observação: o envio real por SMTP depende da configuração das variáveis de ambiente.
+- Montagem de e-mails de alerta para pedidos em risco (vermelho/amarelo).
+- Envio real por **SMTP** quando configurado; caso contrário, opera em **modo simulado**.
 
 ---
 
-## Funcionalidades já implementadas
+## Como o risco de atraso é calculado
 
-* Backend FastAPI com documentação automática em `/docs`
-* Frontend Next.js com páginas de Dashboard, Obras, Logística e RH
-* Banco PostgreSQL via Docker Compose
-* Configurações centralizadas em `backend/app/config.py`
-* Autenticação JWT
-* Hash de senha com `pbkdf2_sha256`
-* Controle de acesso por perfil
-* Alembic configurado para versionamento do banco
-* Migration inicial criada
-* Lifespan configurado no FastAPI
-* Seeds automáticos de dados iniciais
-* CORS configurado com base na URL do frontend
-* Módulo logístico com CRUD parcial/ampliado
-* Módulo RH com cadastro, upload de currículo e ranking
-* Módulo de notificações com simulação de alertas
-* Teste unitário inicial para regras de alerta logístico
+O risco **não** vem de um modelo de ML treinado (ainda). Hoje é uma **heurística ponderada** (`app/services/logistico_ml.py`), interpretável e fácil de ajustar:
 
----
+| Componente | Peso | Significado |
+| --- | --- | --- |
+| Taxa de atraso histórica do fornecedor | 0,45 | indicador mais confiável |
+| Média de atraso (normalizada via log) | 0,25 | magnitude típica do atraso |
+| Desvio padrão do atraso | 0,10 | imprevisibilidade do fornecedor |
+| Risco de prazo (dias até a entrega) | 0,20 | urgência |
 
-## Usuários de teste
+A **prioridade do pedido** não entra no cálculo da probabilidade — ela só **amplifica o nível de alerta** na classificação final:
 
-| Perfil   | E-mail                                              | Senha  |
-| -------- | --------------------------------------------------- | ------ |
-| Gestor   | [gestor@empresa.com](mailto:gestor@empresa.com)     | 123456 |
-| Operador | [operador@empresa.com](mailto:operador@empresa.com) | 123456 |
-| RH       | [rh@empresa.com](mailto:rh@empresa.com)             | 123456 |
+- 🔴 **Vermelho:** prob. ≥ 85% (qualquer prioridade) **ou** prob. ≥ 65% com prioridade alta
+- 🟡 **Amarelo:** 40%–64% com prioridade média ou alta
+- 🟢 **Verde:** demais casos
+
+> Os limiares são configuráveis e devem ser validados com os dados reais da empresa. O `scikit-learn` já está na stack para, futuramente, substituir a heurística por um modelo treinado com o histórico rotulado (atrasou / não atrasou).
 
 ---
 
-## Como rodar com Docker
+## Estrutura de pastas
 
-### 1. Subir o banco de dados
-
-Na raiz do projeto, execute:
-
-```bash
-docker compose up -d db
+```
+sistema_construcao_civil/
+├── backend/
+│   ├── app/
+│   │   ├── main.py              # app FastAPI, CORS, lifespan, /health
+│   │   ├── config.py           # pydantic-settings (fonte única de config)
+│   │   ├── database.py         # engine, sessão, Base
+│   │   ├── auth.py             # JWT, hashing PBKDF2, RBAC
+│   │   ├── jobs.py             # APScheduler (recálculo diário)
+│   │   ├── seed.py             # dados de demonstração (idempotente)
+│   │   ├── models/             # core.py / logistico.py / rh.py
+│   │   ├── schemas/            # core.py / logistico.py / rh.py / auth.py / notificacoes.py
+│   │   ├── routers/            # auth / core / logistico / rh / notificacoes
+│   │   └── services/           # logistico_ml.py / rh_nlp.py / notifications.py
+│   ├── alembic/                # migrações
+│   ├── tests/                  # pytest (integração + unidade, base SQLite)
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   └── start.sh                # alembic upgrade + uvicorn
+├── frontend/
+│   ├── app/                    # login / page (dashboard) / obras / logistico / rh
+│   ├── components/             # NavHeader / Providers / ProtectedRoute
+│   ├── contexts/AuthContext.tsx
+│   ├── lib/api.ts              # cliente HTTP autenticado
+│   ├── types/index.ts         # tipos compartilhados
+│   ├── proxy.ts               # proteção de rotas (Next.js 16)
+│   ├── next.config.mjs
+│   └── Dockerfile
+├── docs/
+│   ├── api/                    # export da documentação OpenAPI (PDF)
+│   └── screenshots/            # imagens usadas neste README
+├── docker-compose.yml
+├── render.yaml                 # blueprint de deploy do backend no Render
+└── .env.example
 ```
 
-### 2. Aplicar as migrations do Alembic
+---
 
-Execute:
+## Rodando localmente (Docker)
 
-```bash
-docker compose run --rm backend alembic upgrade head
-```
-
-Esse comando cria as tabelas no PostgreSQL com base nas migrations existentes.
-
-### 3. Subir o sistema completo
-
-Execute:
+Pré-requisitos: Docker Desktop com **≥ 4 GB de RAM** alocados (o build do Next.js 16 com Turbopack consome bastante memória).
 
 ```bash
+# 1. Copie o exemplo de variáveis e ajuste se necessário
+cp .env.example .env
+
+# 2. Suba todo o ambiente (db + backend + frontend)
 docker compose up --build
 ```
 
-Depois acesse:
+Serviços:
+- Frontend: http://localhost:3000
+- Backend (API + docs): http://localhost:8000/docs
+- PostgreSQL: `localhost:5432`
 
-* Frontend: http://localhost:3000
-* Backend/API: http://localhost:8000
-* Swagger/FastAPI: http://localhost:8000/docs
-* Health check: http://localhost:8000/health
-* PostgreSQL: porta `5432`
-
----
-
-## Como resetar o banco de dados
-
-Use este comando quando quiser apagar o banco e recriar tudo do zero:
-
-```bash
-docker compose down -v
-docker compose up -d db
-docker compose run --rm backend alembic upgrade head
-docker compose up --build
-```
-
-Atenção: `docker compose down -v` apaga o volume do PostgreSQL e remove os dados cadastrados.
+O backend roda `alembic upgrade head` e, em seguida, popula o banco com os **dados de demonstração** automaticamente.
 
 ---
 
-## Como rodar somente o backend localmente
+## Rodando sem Docker
 
-Use este modo caso queira estudar ou testar apenas a API.
-
+### Backend
 ```bash
 cd backend
-python -m venv .venv
-.venv\Scripts\activate
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-```
+python -m spacy download pt_core_news_sm             # opcional (há fallback)
 
-Defina a variável de ambiente do banco:
-
-```bash
-set DATABASE_URL=postgresql+psycopg2://postgres:postgres@localhost:5432/construcao_civil
-```
-
-Aplique as migrations:
-
-```bash
+# configure DATABASE_URL etc. (via .env na pasta backend)
 alembic upgrade head
-```
-
-Rode o backend:
-
-```bash
 uvicorn app.main:app --reload
 ```
 
-Acesse:
-
-```text
-http://localhost:8000/docs
-```
-
----
-
-## Como rodar somente o frontend localmente
-
+### Frontend
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-Acesse:
-
-```text
-http://localhost:3000
-```
-
-O frontend espera que o backend esteja rodando em:
-
-```text
-http://localhost:8000
-```
-
-Essa URL pode ser ajustada pela variável:
-
-```text
-NEXT_PUBLIC_API_URL
-```
-
 ---
 
 ## Variáveis de ambiente
 
-O projeto possui um arquivo `.env.example` como base.
+| Variável | Onde | Descrição |
+| --- | --- | --- |
+| `DATABASE_URL` | backend | URL do PostgreSQL (ex.: Neon) |
+| `JWT_SECRET` | backend | **≥ 32 caracteres** em produção (obrigatório) |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | backend | expiração do token (padrão 480 = 8h) |
+| `ENVIRONMENT` | backend | `development` / `production` / `test` |
+| `FRONTEND_URL` | backend | origem do frontend para o CORS (**sem barra final**) |
+| `NEXT_PUBLIC_API_URL` | frontend | URL do backend (**sem barra final**) |
+| `SMTP_*` | backend | opcional — habilita envio real de e-mails |
+| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | backend | opcional — resumo via LLM (reservado) |
 
-Principais variáveis:
+> Em produção, `app/config.py` **interrompe a inicialização** se `JWT_SECRET` for inseguro/curto ou se `DATABASE_URL` apontar para localhost. Isso é proposital.
 
-```env
-DATABASE_URL=postgresql+psycopg2://postgres:postgres@db:5432/construcao_civil
-JWT_SECRET=troque_essa_chave_em_producao
-ACCESS_TOKEN_EXPIRE_MINUTES=480
-FRONTEND_URL=http://localhost:3000
-ENVIRONMENT=development
+---
 
-SMTP_HOST=
-SMTP_PORT=587
-SMTP_USER=
-SMTP_PASSWORD=
-SMTP_FROM=alertas@empresa.com
+## Usuários de demonstração
 
-OPENAI_API_KEY=
-OPENAI_MODEL=gpt-4o-mini
+Criados automaticamente pelo seed (senha `123456`):
 
-NEXT_PUBLIC_API_URL=http://localhost:8000
+| Perfil | E-mail | Senha |
+| --- | --- | --- |
+| Gestor | `gestor@empresa.com` | `123456` |
+| Operador | `operador@empresa.com` | `123456` |
+| RH | `rh@empresa.com` | `123456` |
+
+---
+
+## Documentação da API
+
+Com o backend rodando, a documentação interativa é gerada automaticamente pelo FastAPI:
+
+- Swagger UI: `/docs`
+- ReDoc: `/redoc`
+- Health check: `/health`
+
+Um export em PDF da documentação está disponível em `docs/api/`.
+
+---
+
+## Testes
+
+```bash
+cd backend
+pytest
 ```
 
-Observação: em ambiente de produção, o `JWT_SECRET` deve ser alterado para uma chave forte.
+Os testes usam **SQLite** (arquivo temporário) e sobrescrevem o `DATABASE_URL` antes de qualquer import do app, portanto **não tocam no banco real**. Cobrem login/RBAC, CRUD de obras/fornecedores/pedidos, validações, ordenação de alertas por severidade, dashboard, vagas, candidatos, ranking e filtros de pedidos.
 
 ---
 
-## Estrutura do projeto
+## Deploy em produção
 
-```text
-sistema_construcao_civil/
-├── backend/
-│   ├── alembic/
-│   │   ├── env.py
-│   │   └── versions/
-│   │       └── 20260604_001_initial_schema.py
-│   ├── alembic.ini
-│   ├── app/
-│   │   ├── auth.py
-│   │   ├── config.py
-│   │   ├── database.py
-│   │   ├── jobs.py
-│   │   ├── main.py
-│   │   ├── models.py
-│   │   ├── schemas.py
-│   │   ├── seed.py
-│   │   ├── routers/
-│   │   │   ├── auth.py
-│   │   │   ├── core.py
-│   │   │   ├── logistico.py
-│   │   │   ├── notificacoes.py
-│   │   │   └── rh.py
-│   │   └── services/
-│   │       ├── logistico_ml.py
-│   │       ├── notifications.py
-│   │       └── rh_nlp.py
-│   ├── tests/
-│   │   └── test_logistico.py
-│   ├── Dockerfile
-│   ├── pytest.ini
-│   └── requirements.txt
-├── frontend/
-│   ├── app/
-│   │   ├── layout.tsx
-│   │   ├── page.tsx
-│   │   ├── globals.css
-│   │   ├── logistico/
-│   │   │   └── page.tsx
-│   │   ├── obras/
-│   │   │   └── page.tsx
-│   │   └── rh/
-│   │       └── page.tsx
-│   ├── lib/
-│   │   └── api.ts
-│   ├── Dockerfile
-│   ├── package.json
-│   └── tsconfig.json
-├── docs/
-│   └── api/
-│       └── localhost_8000 - docs.pdf
-├── docker-compose.yml
-├── .env.example
-├── .gitignore
-└── README.md
-```
+| Camada | Plataforma |
+| --- | --- |
+| Banco | Neon (PostgreSQL) |
+| Backend | Render (Docker — `render.yaml`) |
+| Frontend | Vercel (Next.js) |
+
+Pontos de atenção:
+- No **Render**, defina `DATABASE_URL` (Neon) e `FRONTEND_URL` (URL do Vercel, sem barra final). `JWT_SECRET` é gerado automaticamente pelo blueprint.
+- No **Vercel**, defina `NEXT_PUBLIC_API_URL` apontando para a URL pública do Render (sem barra final).
+- No plano gratuito do Render, o serviço hiberna após inatividade — a **primeira** requisição após ocioso pode levar dezenas de segundos.
 
 ---
 
-## Fluxo básico para testar
+## Controle de acesso (RBAC)
 
-1. Suba o banco.
-2. Rode as migrations.
-3. Suba backend e frontend.
-4. Acesse o frontend em http://localhost:3000.
-5. Entre com o login de demonstração.
-6. Acesse o Dashboard.
-7. Acesse Obras.
-8. Acesse Logística.
-9. Acesse RH.
-10. Confira a documentação da API em http://localhost:8000/docs.
+| Ação | Gestor | Operador | RH |
+| --- | :---: | :---: | :---: |
+| Ver dashboard / obras / pedidos | ✅ | ✅ | ✅ |
+| Gerenciar usuários | ✅ | — | — |
+| Criar/editar obras | ✅ | ✅ | — |
+| Excluir obras | ✅ | — | — |
+| Gerenciar fornecedores/pedidos | ✅ | ✅ | — |
+| Gerenciar vagas/candidatos | ✅ | — | ✅ |
 
 ---
 
-## Principais endpoints
-
-### Saúde
-
-* `GET /health`
-
-### Autenticação
-
-* `POST /auth/login`
-
-### Core
-
-* `GET /core/usuarios`
-* `POST /core/usuarios`
-* `GET /core/obras`
-* `POST /core/obras`
-
-### Logístico
-
-* `GET /logistico/fornecedores`
-* `POST /logistico/fornecedores`
-* `PUT /logistico/fornecedores/{fornecedor_id}`
-* `DELETE /logistico/fornecedores/{fornecedor_id}`
-* `POST /logistico/historico`
-* `GET /logistico/pedidos`
-* `POST /logistico/pedidos`
-* `PUT /logistico/pedidos/{pedido_id}`
-* `DELETE /logistico/pedidos/{pedido_id}`
-* `PUT /logistico/pedidos/{pedido_id}/entregar`
-* `POST /logistico/recalcular-alertas`
-* `GET /logistico/alertas`
-* `GET /logistico/dashboard`
-
-### RH
-
-* `GET /rh/vagas`
-* `POST /rh/vagas`
-* `GET /rh/candidatos`
-* `POST /rh/candidatos`
-* `POST /rh/candidatos/upload`
-* `GET /rh/vagas/{vaga_id}/ranking`
-
-### Notificações
-
-* `GET /notificacoes/alertas-email`
-* `POST /notificacoes/enviar-alertas-simulados`
-
----
-
-## Status atual do projeto
-
-O projeto está em estágio de MVP funcional em evolução.
-
-### Concluído ou parcialmente concluído
-
-* Estrutura modular backend/frontend
-* Autenticação JWT
-* Banco PostgreSQL
-* Configurações centralizadas
-* Alembic configurado
-* Migration inicial
-* Dashboard
-* Listagem de obras
-* Módulo logístico com cadastro, filtros, alertas e ações
-* Módulo RH com vagas, candidatos, upload e ranking
-* Simulação de notificações
-* Documentação automática via Swagger
-
-### Ainda pendente
-
-* Rodar migrations automaticamente no fluxo Docker
-* Criar `tests/conftest.py`
-* Criar testes de integração para autenticação, Core, Logístico e RH
-* Corrigir cálculo logístico para tratar `NaN` no desvio padrão
-* Ajustar regra para prioridade não inflar diretamente a probabilidade de atraso
-* Melhorar ordenação dos alertas por severidade
-* Finalizar CRUD completo no Core
-* Finalizar CRUD completo no RH
-* Melhorar serviço de notificações com `try/except`, logging e uso completo do `config.py`
-* Criar página de Notificações no frontend
-* Criar tela real de login
-* Criar contexto global de autenticação no frontend
-* Separar tipos TypeScript em `frontend/types`
-* Integrar LLM real para resumo de candidatos
-* Melhorar cobertura de testes
-* Preparar configuração diferenciada para desenvolvimento e produção
-
----
-
-## Observações importantes
-
-* O sistema ainda é um MVP acadêmico, não uma versão final de produção.
-* O frontend e o backend estão configurados em modo de desenvolvimento.
-* O backend usa `--reload` no Dockerfile, adequado para desenvolvimento.
-* O Alembic já existe, mas as migrations precisam ser aplicadas antes do backend operar em banco novo.
-* O seed inicial roda no startup do backend e depende das tabelas já existirem.
-* O resumo de candidatos ainda é local; a LLM real ainda não foi conectada.
-* O SMTP é opcional; sem configuração, o envio de e-mails funciona apenas como simulação.
-
----
-
-## Próximos passos recomendados
-
-1. Ajustar o Docker para rodar `alembic upgrade head` antes de iniciar o backend.
-2. Criar `tests/conftest.py`.
-3. Criar testes de integração com `TestClient`.
-4. Corrigir os bugs restantes do cálculo logístico.
-5. Refatorar `services/notifications.py` para usar `config.py` e tratar falhas SMTP.
-6. Completar CRUD de Core e RH.
-7. Criar página de Notificações no frontend.
-8. Criar tela de login real.
-9. Separar tipos TypeScript duplicados.
+*Projeto de extensão universitária — Análise e Desenvolvimento de Sistemas.*
