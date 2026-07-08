@@ -8,6 +8,8 @@ CRUD completo adicionado nesta versão:
 """
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from sqlalchemy.orm import Session
 
@@ -25,6 +27,10 @@ from ..schemas import (
 from ..services.rh_nlp import calcular_score, extrair_texto_pdf, processar_curriculo
 
 router = APIRouter(prefix="/rh", tags=["Módulo de RH"])
+
+# Limite de upload de currículo — evita esgotar a memória do container
+# (o arquivo inteiro é lido em memória para o PyMuPDF processar).
+TAMANHO_MAX_CURRICULO = 5 * 1024 * 1024  # 5 MB
 
 
 # =============================================================================
@@ -151,11 +157,19 @@ async def upload_curriculo(
         raise HTTPException(status_code=400, detail="Envie um currículo em PDF.")
 
     conteudo = await arquivo.read()
-    texto = extrair_texto_pdf(conteudo)
+    if len(conteudo) > TAMANHO_MAX_CURRICULO:
+        raise HTTPException(
+            status_code=413,
+            detail="Arquivo muito grande. O limite para currículos é 5 MB.",
+        )
+
+    # PyMuPDF e spaCy são CPU-bound: rodar fora do event loop para não
+    # congelar as demais requisições durante o processamento.
+    texto = await asyncio.to_thread(extrair_texto_pdf, conteudo)
     if not texto:
         raise HTTPException(status_code=400, detail="Não foi possível extrair texto do PDF.")
 
-    dados = processar_curriculo(nome, texto)
+    dados = await asyncio.to_thread(processar_curriculo, nome, texto)
     candidato = Candidato(
         nome=nome,
         email=email,
