@@ -41,7 +41,7 @@ Tudo é organizado sobre uma base administrativa (**Core**) com autenticação J
 
 ## Capturas de tela
 
-> As imagens ficam em `docs/screenshots/`. Coloque os arquivos `.png` nessa pasta com os nomes abaixo.
+> As imagens ficam em `docs/screenshots/`
 
 ### Login
 ![Tela de login](docs/screenshots/tela-login-scc.png)
