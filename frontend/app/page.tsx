@@ -203,7 +203,7 @@ export default function Home() {
 
       {!dashboard && !carregando && !erro && (
         <section className="card">
-          <p className="muted">Sem dados para exibir. Clique em "Atualizar dados".</p>
+          <p className="muted">Sem dados para exibir. Clique em &quot;Atualizar dados&quot;.</p>
         </section>
       )}
     </main>
