@@ -210,6 +210,87 @@ class TestPedidos:
 
 
 # =============================================================================
+# 4b. Entrega de pedido (guardas contra dupla entrega e data inválida)
+# =============================================================================
+
+class TestEntregaPedido:
+    def _criar_pedido(self, client, headers) -> int:
+        payload = {
+            "data_pedido":   str(date.today() - timedelta(days=2)),
+            "data_prevista": str(date.today() + timedelta(days=10)),
+            "tipo_insumo":   "brita",
+            "fornecedor_id": 1,
+            "obra_id":       1,
+            "prioridade":    "baixa",
+        }
+        r = client.post("/logistico/pedidos", json=payload, headers=headers)
+        assert r.status_code == 201
+        return r.json()["id"]
+
+    def _total_entregas_fornecedor(self, client, headers, fornecedor_id: int = 1) -> int:
+        r = client.get("/logistico/fornecedores", headers=headers)
+        assert r.status_code == 200
+        return next(f["total_pedidos"] for f in r.json() if f["id"] == fornecedor_id)
+
+    def test_entrega_valida_marca_entregue(self, client, headers):
+        pedido_id = self._criar_pedido(client, headers)
+        r = client.put(
+            f"/logistico/pedidos/{pedido_id}/entregar",
+            json={"data_real_entrega": str(date.today())},
+            headers=headers,
+        )
+        assert r.status_code == 200
+        data = r.json()
+        # Entregue antes da data prevista → status "entregue" (não "atrasado")
+        assert data["status"] == "entregue"
+        assert data["data_real_entrega"] == str(date.today())
+
+    def test_entrega_dupla_retorna_400_e_nao_duplica_historico(self, client, headers):
+        pedido_id = self._criar_pedido(client, headers)
+
+        antes = self._total_entregas_fornecedor(client, headers)
+
+        primeira = client.put(
+            f"/logistico/pedidos/{pedido_id}/entregar",
+            json={"data_real_entrega": str(date.today())},
+            headers=headers,
+        )
+        assert primeira.status_code == 200
+
+        # Entrega válida cria exatamente 1 registro de histórico
+        depois_primeira = self._total_entregas_fornecedor(client, headers)
+        assert depois_primeira == antes + 1
+
+        segunda = client.put(
+            f"/logistico/pedidos/{pedido_id}/entregar",
+            json={"data_real_entrega": str(date.today())},
+            headers=headers,
+        )
+        assert segunda.status_code == 400
+
+        # A tentativa rejeitada não pode ter criado histórico extra
+        depois_segunda = self._total_entregas_fornecedor(client, headers)
+        assert depois_segunda == depois_primeira
+
+    def test_entrega_anterior_a_data_do_pedido_retorna_400(self, client, headers):
+        pedido_id = self._criar_pedido(client, headers)
+        r = client.put(
+            f"/logistico/pedidos/{pedido_id}/entregar",
+            json={"data_real_entrega": str(date.today() - timedelta(days=30))},
+            headers=headers,
+        )
+        assert r.status_code == 400
+
+    def test_entrega_pedido_inexistente_retorna_404(self, client, headers):
+        r = client.put(
+            "/logistico/pedidos/99999/entregar",
+            json={"data_real_entrega": str(date.today())},
+            headers=headers,
+        )
+        assert r.status_code == 404
+
+
+# =============================================================================
 # 5. Recalcular alertas
 # =============================================================================
 

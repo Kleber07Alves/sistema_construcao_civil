@@ -307,6 +307,25 @@ def entregar_pedido(
 
     if not pedido:
         raise HTTPException(status_code=404, detail="Pedido não encontrado.")
+
+    # Guarda contra entrega dupla: registrar_entrega cria uma linha em
+    # historico_entregas — entregar duas vezes duplicaria o histórico e
+    # inflaria as estatísticas do fornecedor.
+    if pedido.status != StatusPedido.pendente:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Apenas pedidos 'pendente' podem ser entregues. "
+                f"Status atual: '{pedido.status.value}'."
+            ),
+        )
+
+    if dados.data_real_entrega < pedido.data_pedido:
+        raise HTTPException(
+            status_code=400,
+            detail="A data de entrega não pode ser anterior à data do pedido.",
+        )
+
     return registrar_entrega(db, pedido, dados.data_real_entrega)
 
 
