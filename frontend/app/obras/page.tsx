@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useState,
+  type Dispatch,
+  type FormEvent,
+  type SetStateAction,
+} from "react";
 import { apiJson } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePerfil } from "@/components/ProtectedRoute";
@@ -71,6 +78,87 @@ const FORM_VAZIO: ObraForm = {
   prioridade:  "media",
   data_inicio: null,
 };
+
+// ─── Formulário compartilhado (criar/editar) ─────────────────────────────────
+// DECLARADO FORA de ObrasPage de propósito: um componente definido dentro de
+// outro é recriado (nova identidade) a cada render do pai — o React desmonta
+// e remonta o formulário a cada tecla digitada, fazendo o input perder o foco.
+function FormObra({
+  form,
+  setForm,
+  salvando,
+  onSubmit,
+  onCancel,
+}: {
+  form: ObraForm;
+  setForm: Dispatch<SetStateAction<ObraForm>>;
+  salvando: boolean;
+  onSubmit: (e: FormEvent) => Promise<void>;
+  onCancel: () => void;
+}) {
+  return (
+    <form className="form" onSubmit={onSubmit}>
+      <input
+        className="input"
+        placeholder="Nome da obra *"
+        value={form.nome}
+        onChange={(e) => setForm({ ...form, nome: e.target.value })}
+        required
+      />
+      <input
+        className="input"
+        placeholder="Endereço *"
+        value={form.endereco}
+        onChange={(e) => setForm({ ...form, endereco: e.target.value })}
+        required
+      />
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <select
+          className="select"
+          value={form.status}
+          onChange={(e) => setForm({ ...form, status: e.target.value as StatusObra })}
+        >
+          <option value="planejada">Planejada</option>
+          <option value="em_andamento">Em andamento</option>
+          <option value="concluida">Concluída</option>
+          <option value="pausada">Pausada</option>
+        </select>
+        <select
+          className="select"
+          value={form.prioridade}
+          onChange={(e) => setForm({ ...form, prioridade: e.target.value as PrioridadeObra })}
+        >
+          <option value="alta">Alta</option>
+          <option value="media">Média</option>
+          <option value="baixa">Baixa</option>
+        </select>
+      </div>
+      <label style={{ fontSize: 13, color: "var(--muted)" }}>
+        Data de início (opcional)
+        <input
+          className="input"
+          type="date"
+          value={form.data_inicio ?? ""}
+          onChange={(e) => setForm({ ...form, data_inicio: e.target.value || null })}
+          style={{ marginTop: 4 }}
+        />
+      </label>
+      <div className="actions" style={{ marginTop: 4 }}>
+        <button className="button" type="submit" disabled={salvando}>
+          {salvando ? "Salvando…" : "Salvar"}
+        </button>
+        <button
+          className="button secondary"
+          type="button"
+          onClick={onCancel}
+          disabled={salvando}
+        >
+          Cancelar
+        </button>
+      </div>
+    </form>
+  );
+}
 
 // ─── Componente ──────────────────────────────────────────────────────────────
 export default function ObrasPage() {
@@ -184,72 +272,6 @@ export default function ObrasPage() {
     }
   }
 
-  // ── Formulário compartilhado ───────────────────────────────────────────
-  function FormObra({ onSubmit }: { onSubmit: (e: FormEvent) => Promise<void> }) {
-    return (
-      <form className="form" onSubmit={onSubmit}>
-        <input
-          className="input"
-          placeholder="Nome da obra *"
-          value={form.nome}
-          onChange={(e) => setForm({ ...form, nome: e.target.value })}
-          required
-        />
-        <input
-          className="input"
-          placeholder="Endereço *"
-          value={form.endereco}
-          onChange={(e) => setForm({ ...form, endereco: e.target.value })}
-          required
-        />
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          <select
-            className="select"
-            value={form.status}
-            onChange={(e) => setForm({ ...form, status: e.target.value as StatusObra })}
-          >
-            <option value="planejada">Planejada</option>
-            <option value="em_andamento">Em andamento</option>
-            <option value="concluida">Concluída</option>
-            <option value="pausada">Pausada</option>
-          </select>
-          <select
-            className="select"
-            value={form.prioridade}
-            onChange={(e) => setForm({ ...form, prioridade: e.target.value as PrioridadeObra })}
-          >
-            <option value="alta">Alta</option>
-            <option value="media">Média</option>
-            <option value="baixa">Baixa</option>
-          </select>
-        </div>
-        <label style={{ fontSize: 13, color: "var(--muted)" }}>
-          Data de início (opcional)
-          <input
-            className="input"
-            type="date"
-            value={form.data_inicio ?? ""}
-            onChange={(e) => setForm({ ...form, data_inicio: e.target.value || null })}
-            style={{ marginTop: 4 }}
-          />
-        </label>
-        <div className="actions" style={{ marginTop: 4 }}>
-          <button className="button" type="submit" disabled={salvando}>
-            {salvando ? "Salvando…" : "Salvar"}
-          </button>
-          <button
-            className="button secondary"
-            type="button"
-            onClick={fecharModal}
-            disabled={salvando}
-          >
-            Cancelar
-          </button>
-        </div>
-      </form>
-    );
-  }
-
   // ── Render ─────────────────────────────────────────────────────────────
   return (
     <main className="container">
@@ -354,7 +376,13 @@ export default function ObrasPage() {
                 ✕
               </button>
             </div>
-            <FormObra onSubmit={salvarNova} />
+            <FormObra
+              form={form}
+              setForm={setForm}
+              salvando={salvando}
+              onSubmit={salvarNova}
+              onCancel={fecharModal}
+            />
           </div>
         </div>
       )}
@@ -373,7 +401,13 @@ export default function ObrasPage() {
               </button>
             </div>
             <p className="muted" style={{ margin: "0 0 4px" }}>ID #{selecionada.id}</p>
-            <FormObra onSubmit={salvarEdicao} />
+            <FormObra
+              form={form}
+              setForm={setForm}
+              salvando={salvando}
+              onSubmit={salvarEdicao}
+              onCancel={fecharModal}
+            />
           </div>
         </div>
       )}

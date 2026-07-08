@@ -1,10 +1,14 @@
-import os
+import logging
 import smtplib
 from email.message import EmailMessage
+
 from sqlalchemy.orm import Session
 
+from ..config import settings
 from ..models import NivelAlerta, Pedido, StatusPedido
 from ..schemas import EmailAlerta
+
+logger = logging.getLogger(__name__)
 
 
 def montar_emails_alerta(db: Session) -> list[EmailAlerta]:
@@ -26,28 +30,45 @@ def montar_emails_alerta(db: Session) -> list[EmailAlerta]:
             f"Probabilidade de atraso: {pedido.prob_atraso * 100:.0f}%\n\n"
             f"{pedido.texto_alerta}"
         )
-        emails.append(EmailAlerta(assunto=assunto, destinatario="gestor@empresa.com", corpo=corpo))
+        emails.append(
+            EmailAlerta(
+                assunto=assunto,
+                destinatario=settings.smtp_destinatario_padrao,
+                corpo=corpo,
+            )
+        )
     return emails
 
 
 def enviar_email_real(email: EmailAlerta) -> bool:
-    host = os.getenv("SMTP_HOST")
-    user = os.getenv("SMTP_USER")
-    password = os.getenv("SMTP_PASSWORD")
-    sender = os.getenv("SMTP_FROM", user or "alertas@empresa.com")
-    port = int(os.getenv("SMTP_PORT", "587"))
+    """
+    Envia o e-mail via SMTP quando configurado.
 
-    if not host or not user or not password:
+    Nunca levanta exceção: retorna False quando o SMTP não está configurado
+    (modo simulado) ou quando o envio falha. A falha é registrada no log —
+    assim nem o endpoint de notificações nem o job diário do APScheduler
+    quebram por indisponibilidade do servidor de e-mail.
+    """
+    if not settings.smtp_configurado:
         return False
 
     msg = EmailMessage()
     msg["Subject"] = email.assunto
-    msg["From"] = sender
+    msg["From"] = settings.smtp_from or settings.smtp_user
     msg["To"] = email.destinatario
     msg.set_content(email.corpo)
 
-    with smtplib.SMTP(host, port) as smtp:
-        smtp.starttls()
-        smtp.login(user, password)
-        smtp.send_message(msg)
-    return True
+    try:
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as smtp:
+            smtp.starttls()
+            smtp.login(settings.smtp_user, settings.smtp_password)
+            smtp.send_message(msg)
+        return True
+    except Exception as exc:
+        logger.error(
+            "Falha ao enviar e-mail '%s' para %s: %s",
+            email.assunto,
+            email.destinatario,
+            exc,
+        )
+        return False

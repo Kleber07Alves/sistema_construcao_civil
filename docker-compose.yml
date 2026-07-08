@@ -29,7 +29,9 @@ services:
       # Sobrescreve variáveis que precisam do hostname Docker interno
       DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/construcao_civil
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
-      ENVIRONMENT: ${ENVIRONMENT:-production}
+      # O compose é o ambiente LOCAL — produção real é o Render (render.yaml),
+      # onde ENVIRONMENT=production ativa as validações de segurança do config.py.
+      ENVIRONMENT: ${ENVIRONMENT:-development}
     ports:
       - "8000:8000"
     # volumes:                   # ← DEV ONLY: descomente para hot-reload
