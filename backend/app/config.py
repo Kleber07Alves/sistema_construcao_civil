@@ -54,11 +54,14 @@ class Settings(BaseSettings):
     smtp_from: str = "alertas@empresa.com"
     smtp_destinatario_padrao: str = "gestor@empresa.com"
 
-    
+    # ── LLM API — resumo de candidatos (opcional; sem chave usa resumo local) ──
+    # Claude (preferencial) e OpenAI (alternativa). Qualquer uma habilita o LLM.
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-haiku-4-5-20251001"
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
 
-    
+
 
     @property
     def smtp_configurado(self) -> bool:
@@ -67,8 +70,8 @@ class Settings(BaseSettings):
 
     @property
     def llm_configurado(self) -> bool:
-        """True quando a chave da OpenAI está presente."""
-        return bool(self.openai_api_key)
+        """True quando alguma chave de LLM (Anthropic ou OpenAI) está presente."""
+        return bool(self.anthropic_api_key or self.openai_api_key)
 
     
 
