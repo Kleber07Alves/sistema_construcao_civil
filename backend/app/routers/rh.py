@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from ..auth import exigir_perfis, usuario_atual
 from ..database import get_db
+from ..dependencies import paginacao
 from ..models import Candidato, PerfilUsuario, Usuario, Vaga
 from ..schemas import (
     CandidatoCriar,
@@ -41,8 +42,15 @@ TAMANHO_MAX_CURRICULO = 5 * 1024 * 1024  # 5 MB
 def listar_vagas(
     db: Session = Depends(get_db),
     _: Usuario = Depends(usuario_atual),
+    pag: dict[str, int] = Depends(paginacao),
 ):
-    return db.query(Vaga).order_by(Vaga.id).all()
+    return (
+        db.query(Vaga)
+        .order_by(Vaga.id)
+        .offset(pag["skip"])
+        .limit(pag["limit"])
+        .all()
+    )
 
 
 @router.post("/vagas", response_model=VagaSaida, status_code=201)
@@ -119,8 +127,15 @@ def excluir_vaga(
 def listar_candidatos(
     db: Session = Depends(get_db),
     _: Usuario = Depends(usuario_atual),
+    pag: dict[str, int] = Depends(paginacao),
 ):
-    return db.query(Candidato).order_by(Candidato.id).all()
+    return (
+        db.query(Candidato)
+        .order_by(Candidato.id)
+        .offset(pag["skip"])
+        .limit(pag["limit"])
+        .all()
+    )
 
 
 @router.post("/candidatos", response_model=CandidatoSaida, status_code=201)
