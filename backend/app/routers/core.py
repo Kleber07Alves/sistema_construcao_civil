@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from ..auth import criar_hash_senha, exigir_perfis, usuario_atual
 from ..database import get_db
+from ..dependencies import paginacao
 from ..models import Obra, PerfilUsuario, Usuario
 from ..schemas import (
     ObraAtualizar,
@@ -34,8 +35,15 @@ router = APIRouter(prefix="/core", tags=["Core — Gestão"])
 def listar_usuarios(
     db: Session = Depends(get_db),
     _: Usuario = Depends(exigir_perfis(PerfilUsuario.gestor)),
+    pag: dict[str, int] = Depends(paginacao),
 ):
-    return db.query(Usuario).order_by(Usuario.id).all()
+    return (
+        db.query(Usuario)
+        .order_by(Usuario.id)
+        .offset(pag["skip"])
+        .limit(pag["limit"])
+        .all()
+    )
 
 
 @router.post("/usuarios", response_model=UsuarioSaida, status_code=201)
@@ -168,8 +176,15 @@ def desativar_usuario(
 def listar_obras(
     db: Session = Depends(get_db),
     _: Usuario = Depends(usuario_atual),
+    pag: dict[str, int] = Depends(paginacao),
 ):
-    return db.query(Obra).order_by(Obra.id).all()
+    return (
+        db.query(Obra)
+        .order_by(Obra.id)
+        .offset(pag["skip"])
+        .limit(pag["limit"])
+        .all()
+    )
 
 
 @router.post("/obras", response_model=ObraSaida, status_code=201)
