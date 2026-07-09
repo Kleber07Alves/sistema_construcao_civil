@@ -75,6 +75,23 @@ class PedidoCriar(PedidoBase):
     pass
 
 
+class PedidoAtualizar(BaseModel):
+    """
+    Atualização parcial de pedido — apenas pedidos com status 'pendente'.
+
+    Campos calculados (prob_atraso, nivel_alerta, texto_alerta) e o status
+    não são editáveis aqui: são gerenciados pelo pipeline de alertas e pelo
+    endpoint de entrega.
+    """
+    data_pedido:   date | None       = None
+    data_prevista: date | None       = None
+    tipo_insumo:   str | None        = None
+    fornecedor_id: int | None        = None
+    obra_id:       int | None        = None
+    prioridade:    Prioridade | None = None
+    observacao:    str | None        = None
+
+
 class PedidoEntregar(BaseModel):
     data_real_entrega: date
 
