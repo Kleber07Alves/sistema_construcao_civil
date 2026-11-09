@@ -5,7 +5,11 @@ from ..auth import exigir_perfis
 from ..database import get_db
 from ..models import PerfilUsuario, Usuario
 from ..schemas import EmailAlerta
-from ..services.notifications import enviar_email_real, montar_emails_alerta
+from ..services.notifications import (
+    enviar_email_real,
+    montar_emails_alerta,
+    montar_emails_candidatos,
+)
 
 router = APIRouter(prefix="/notificacoes", tags=["Módulo de Notificações"])
 
@@ -15,7 +19,12 @@ def visualizar_emails_alerta(
     db: Session = Depends(get_db),
     _: Usuario = Depends(exigir_perfis(PerfilUsuario.gestor, PerfilUsuario.operador)),
 ):
-    return montar_emails_alerta(db)
+    """
+    Prévia dos e-mails que o sistema enviaria hoje:
+      • alertas logísticos — pedidos pendentes em risco (vermelho/amarelo)
+      • alertas de RH — vagas abertas com candidatos compatíveis
+    """
+    return montar_emails_alerta(db) + montar_emails_candidatos(db)
 
 
 @router.post("/enviar-alertas-simulados")
@@ -23,7 +32,7 @@ def enviar_alertas_simulados(
     db: Session = Depends(get_db),
     _: Usuario = Depends(exigir_perfis(PerfilUsuario.gestor, PerfilUsuario.operador)),
 ):
-    emails = montar_emails_alerta(db)
+    emails = montar_emails_alerta(db) + montar_emails_candidatos(db)
     enviados_reais = 0
     for email in emails:
         if enviar_email_real(email):

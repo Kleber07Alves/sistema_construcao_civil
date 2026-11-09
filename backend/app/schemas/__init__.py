@@ -32,6 +32,7 @@ from .logistico import (
     FornecedorSaida,
     HistoricoCriar,
     HistoricoSaida,
+    PedidoAtualizar,
     PedidoBase,
     PedidoCriar,
     PedidoEntregar,
@@ -64,7 +65,7 @@ __all__ = [
     # logistico
     "FornecedorBase", "FornecedorCriar", "FornecedorSaida", "FornecedorAtualizar",
     "HistoricoCriar", "HistoricoSaida",
-    "PedidoBase", "PedidoCriar", "PedidoSaida", "PedidoEntregar",
+    "PedidoBase", "PedidoCriar", "PedidoSaida", "PedidoEntregar", "PedidoAtualizar",
     "AlertaSaida", "DashboardLogistico",
     # rh
     "VagaBase", "VagaCriar", "VagaSaida", "VagaAtualizar",

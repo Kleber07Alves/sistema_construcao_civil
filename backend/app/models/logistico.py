@@ -48,7 +48,9 @@ class HistoricoEntrega(Base):
     __tablename__ = "historico_entregas"
 
     id:             Mapped[int]  = mapped_column(Integer, primary_key=True, index=True)
-    fornecedor_id:  Mapped[int]  = mapped_column(ForeignKey("fornecedores.id"), nullable=False)
+    # index=True: Postgres NÃO indexa FKs automaticamente — este é o join/filtro
+    # mais frequente do pipeline de estatísticas (agregação por fornecedor).
+    fornecedor_id:  Mapped[int]  = mapped_column(ForeignKey("fornecedores.id"), nullable=False, index=True)
     dias_atraso:    Mapped[int]  = mapped_column(Integer, nullable=False)
     tipo_insumo:    Mapped[str]  = mapped_column(String(100), nullable=False)
     mes_referencia: Mapped[date] = mapped_column(Date, nullable=False)
@@ -64,13 +66,16 @@ class Pedido(Base):
     data_prevista:     Mapped[date]         = mapped_column(Date, nullable=False)
     data_real_entrega: Mapped[date | None]  = mapped_column(Date, nullable=True)
     tipo_insumo:       Mapped[str]          = mapped_column(String(100), nullable=False)
-    fornecedor_id:     Mapped[int]          = mapped_column(ForeignKey("fornecedores.id"), nullable=False)
-    obra_id:           Mapped[int]          = mapped_column(ForeignKey("obras.id"), nullable=False)
+    # index=True nas FKs e nos campos de filtro: Postgres não indexa FKs
+    # automaticamente, e status/nivel_alerta são os filtros mais usados
+    # em GET /pedidos, alertas e dashboard.
+    fornecedor_id:     Mapped[int]          = mapped_column(ForeignKey("fornecedores.id"), nullable=False, index=True)
+    obra_id:           Mapped[int]          = mapped_column(ForeignKey("obras.id"), nullable=False, index=True)
     prioridade:        Mapped[Prioridade]   = mapped_column(SQLEnum(Prioridade), default=Prioridade.media)
-    status:            Mapped[StatusPedido] = mapped_column(SQLEnum(StatusPedido), default=StatusPedido.pendente)
+    status:            Mapped[StatusPedido] = mapped_column(SQLEnum(StatusPedido), default=StatusPedido.pendente, index=True)
     observacao:        Mapped[str | None]   = mapped_column(Text, nullable=True)
     prob_atraso:       Mapped[float]        = mapped_column(Float, default=0.0)
-    nivel_alerta:      Mapped[NivelAlerta]  = mapped_column(SQLEnum(NivelAlerta), default=NivelAlerta.verde)
+    nivel_alerta:      Mapped[NivelAlerta]  = mapped_column(SQLEnum(NivelAlerta), default=NivelAlerta.verde, index=True)
     texto_alerta:      Mapped[str]          = mapped_column(String(255), default="")
 
     # ── Relacionamentos ────────────────────────────────────────────────────

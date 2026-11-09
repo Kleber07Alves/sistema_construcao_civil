@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .database import SessionLocal
+from .exceptions import registrar_handlers
 from .jobs import iniciar_jobs, parar_jobs
 from .routers import auth, core, logistico, notificacoes, rh
 from .seed import criar_dados_iniciais
@@ -98,6 +99,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+registrar_handlers(app)
 
 app.include_router(auth.router)
 app.include_router(core.router)

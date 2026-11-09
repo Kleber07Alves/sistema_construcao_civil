@@ -3,10 +3,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import case
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from ..auth import exigir_perfis, usuario_atual
 from ..database import get_db
+from ..dependencies import paginacao
 from ..models import (
     Fornecedor,
     HistoricoEntrega,
@@ -25,6 +26,7 @@ from ..schemas import (
     FornecedorSaida,
     HistoricoCriar,
     HistoricoSaida,
+    PedidoAtualizar,
     PedidoCriar,
     PedidoEntregar,
     PedidoSaida,
@@ -76,7 +78,13 @@ def _buscar_alertas_pedidos(
         obra_id: filtro opcional por obra.
         nivel_alerta: filtro opcional por nível de alerta.
     """
-    query = db.query(Pedido).filter(Pedido.status == StatusPedido.pendente)
+    # joinedload evita N+1: sem ele, cada pedido dispararia 2 queries extras
+    # (obra e fornecedor) na serialização abaixo.
+    query = (
+        db.query(Pedido)
+        .options(joinedload(Pedido.obra), joinedload(Pedido.fornecedor))
+        .filter(Pedido.status == StatusPedido.pendente)
+    )
 
     if obra_id is not None:
         query = query.filter(Pedido.obra_id == obra_id)
@@ -110,8 +118,15 @@ def _buscar_alertas_pedidos(
 def listar_fornecedores(
     db: Session = Depends(get_db),
     _: Usuario = Depends(usuario_atual),
+    pag: dict[str, int] = Depends(paginacao),
 ):
-    return db.query(Fornecedor).order_by(Fornecedor.id).all()
+    return (
+        db.query(Fornecedor)
+        .order_by(Fornecedor.id)
+        .offset(pag["skip"])
+        .limit(pag["limit"])
+        .all()
+    )
 
 
 @router.post("/fornecedores", response_model=FornecedorSaida, status_code=201)
@@ -179,6 +194,40 @@ def excluir_fornecedor(
 # Histórico de entregas
 # =============================================================================
 
+@router.get("/historico", response_model=list[HistoricoSaida])
+def listar_historico(
+    fornecedor_id: int | None = None,
+    tipo_insumo:   str | None = None,
+    db: Session = Depends(get_db),
+    _: Usuario  = Depends(usuario_atual),
+    pag: dict[str, int] = Depends(paginacao),
+):
+    """
+    Lista o histórico de entregas, do mês mais recente para o mais antigo.
+
+    Query params:
+      - fornecedor_id — filtra por fornecedor específico
+      - tipo_insumo   — filtra por insumo (correspondência exata)
+
+    Base para o gráfico de atrasos por mês do dashboard e para auditoria
+    dos dados que alimentam as estatísticas dos fornecedores.
+    """
+    query = db.query(HistoricoEntrega)
+
+    if fornecedor_id is not None:
+        query = query.filter(HistoricoEntrega.fornecedor_id == fornecedor_id)
+
+    if tipo_insumo:
+        query = query.filter(HistoricoEntrega.tipo_insumo == tipo_insumo)
+
+    return (
+        query.order_by(HistoricoEntrega.mes_referencia.desc(), HistoricoEntrega.id.desc())
+        .offset(pag["skip"])
+        .limit(pag["limit"])
+        .all()
+    )
+
+
 @router.post("/historico", response_model=HistoricoSaida, status_code=201)
 def criar_historico(
     dados: HistoricoCriar,
@@ -213,6 +262,7 @@ def listar_pedidos(
     fornecedor_id: int         | None = None,
     db: Session = Depends(get_db),
     _: Usuario  = Depends(usuario_atual),
+    pag: dict[str, int] = Depends(paginacao),
 ):
     """
     Lista pedidos com filtros opcionais.
@@ -237,7 +287,7 @@ def listar_pedidos(
     if fornecedor_id is not None:
         query = query.filter(Pedido.fornecedor_id == fornecedor_id)
 
-    return query.order_by(Pedido.id).all()
+    return query.order_by(Pedido.id).offset(pag["skip"]).limit(pag["limit"]).all()
 
 
 @router.post("/pedidos", response_model=PedidoSaida, status_code=201)
@@ -268,6 +318,66 @@ def criar_pedido(
     db.refresh(pedido)
 
     return pedido
+
+@router.put("/pedidos/{pedido_id}", response_model=PedidoSaida)
+def atualizar_pedido(
+    pedido_id: int,
+    dados: PedidoAtualizar,
+    db: Session = Depends(get_db),
+    _: Usuario = Depends(exigir_perfis(PerfilUsuario.gestor, PerfilUsuario.operador)),
+):
+    """
+    Atualização parcial de um pedido pendente.
+
+    Regras:
+      • Apenas pedidos com status 'pendente' podem ser editados — pedidos
+        entregues/atrasados já geraram histórico e são imutáveis.
+      • fornecedor_id / obra_id, se alterados, precisam existir.
+      • A combinação final de datas precisa manter data_prevista >= data_pedido.
+      • Mudanças em fornecedor, datas ou prioridade alteram o risco — o
+        recálculo de alertas roda ao final.
+    """
+    pedido = db.get(Pedido, pedido_id)
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido não encontrado.")
+
+    if pedido.status != StatusPedido.pendente:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Apenas pedidos 'pendente' podem ser editados. "
+                f"Status atual: '{pedido.status.value}'."
+            ),
+        )
+
+    update_data = dados.model_dump(exclude_unset=True)
+
+    if not update_data:
+        return pedido  # body vazio — nenhuma alteração, retorna estado atual
+
+    if "fornecedor_id" in update_data and not db.get(Fornecedor, update_data["fornecedor_id"]):
+        raise HTTPException(status_code=404, detail="Fornecedor não encontrado.")
+
+    if "obra_id" in update_data and not db.get(Obra, update_data["obra_id"]):
+        raise HTTPException(status_code=404, detail="Obra não encontrada.")
+
+    # Valida o PAR final de datas (campo alterado combinado com o existente)
+    nova_data_pedido   = update_data.get("data_pedido", pedido.data_pedido)
+    nova_data_prevista = update_data.get("data_prevista", pedido.data_prevista)
+    if nova_data_prevista < nova_data_pedido:
+        raise HTTPException(
+            status_code=400,
+            detail="A data prevista não pode ser anterior à data do pedido.",
+        )
+
+    for campo, valor in update_data.items():
+        setattr(pedido, campo, valor)
+
+    db.commit()
+    recalcular_alertas(db)
+    db.refresh(pedido)
+    return pedido
+
 
 @router.delete("/pedidos/{pedido_id}", status_code=204)
 def excluir_pedido(

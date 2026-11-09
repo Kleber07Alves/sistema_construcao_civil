@@ -557,3 +557,289 @@ class TestFiltrosPedidos:
         assert r.status_code == 200
         for a in r.json():
             assert a["nivel_alerta"] == "verde"
+
+
+# =============================================================================
+# FASE 2 — Editar pedido (PUT /logistico/pedidos/{id})
+# =============================================================================
+
+class TestAtualizarPedido:
+    def _criar_pedido(self, client, headers) -> int:
+        payload = {
+            "data_pedido":   str(date.today() - timedelta(days=1)),
+            "data_prevista": str(date.today() + timedelta(days=8)),
+            "tipo_insumo":   "areia",
+            "fornecedor_id": 1,
+            "obra_id":       1,
+            "prioridade":    "baixa",
+        }
+        r = client.post("/logistico/pedidos", json=payload, headers=headers)
+        assert r.status_code == 201
+        return r.json()["id"]
+
+    def test_atualizacao_parcial(self, client, headers):
+        pedido_id = self._criar_pedido(client, headers)
+        r = client.put(
+            f"/logistico/pedidos/{pedido_id}",
+            json={"tipo_insumo": "areia fina", "prioridade": "alta"},
+            headers=headers,
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["tipo_insumo"] == "areia fina"
+        assert data["prioridade"]  == "alta"
+        # Campos não enviados permanecem intactos
+        assert data["fornecedor_id"] == 1
+        assert data["status"]        == "pendente"
+
+    def test_body_vazio_retorna_estado_atual(self, client, headers):
+        pedido_id = self._criar_pedido(client, headers)
+        r = client.put(f"/logistico/pedidos/{pedido_id}", json={}, headers=headers)
+        assert r.status_code == 200
+        assert r.json()["id"] == pedido_id
+
+    def test_data_prevista_anterior_retorna_400(self, client, headers):
+        pedido_id = self._criar_pedido(client, headers)
+        r = client.put(
+            f"/logistico/pedidos/{pedido_id}",
+            json={"data_prevista": str(date.today() - timedelta(days=10))},
+            headers=headers,
+        )
+        assert r.status_code == 400
+
+    def test_fornecedor_inexistente_retorna_404(self, client, headers):
+        pedido_id = self._criar_pedido(client, headers)
+        r = client.put(
+            f"/logistico/pedidos/{pedido_id}",
+            json={"fornecedor_id": 99999},
+            headers=headers,
+        )
+        assert r.status_code == 404
+
+    def test_obra_inexistente_retorna_404(self, client, headers):
+        pedido_id = self._criar_pedido(client, headers)
+        r = client.put(
+            f"/logistico/pedidos/{pedido_id}",
+            json={"obra_id": 99999},
+            headers=headers,
+        )
+        assert r.status_code == 404
+
+    def test_pedido_entregue_nao_pode_ser_editado(self, client, headers):
+        pedido_id = self._criar_pedido(client, headers)
+        r_entrega = client.put(
+            f"/logistico/pedidos/{pedido_id}/entregar",
+            json={"data_real_entrega": str(date.today())},
+            headers=headers,
+        )
+        assert r_entrega.status_code == 200
+
+        r = client.put(
+            f"/logistico/pedidos/{pedido_id}",
+            json={"tipo_insumo": "cimento"},
+            headers=headers,
+        )
+        assert r.status_code == 400
+
+    def test_pedido_inexistente_retorna_404(self, client, headers):
+        r = client.put(
+            "/logistico/pedidos/99999",
+            json={"tipo_insumo": "brita"},
+            headers=headers,
+        )
+        assert r.status_code == 404
+
+
+# =============================================================================
+# FASE 2 — Histórico de entregas (GET /logistico/historico)
+# =============================================================================
+
+class TestHistorico:
+    def test_listar_historico(self, client, headers):
+        r = client.get("/logistico/historico", headers=headers)
+        assert r.status_code == 200
+        historico = r.json()
+        assert isinstance(historico, list)
+        assert len(historico) >= 10  # seed cria 10 registros
+        for h in historico:
+            assert "fornecedor_id"  in h
+            assert "dias_atraso"    in h
+            assert "tipo_insumo"    in h
+            assert "mes_referencia" in h
+
+    def test_ordenado_do_mais_recente_para_o_mais_antigo(self, client, headers):
+        r = client.get("/logistico/historico", headers=headers)
+        assert r.status_code == 200
+        meses = [h["mes_referencia"] for h in r.json()]
+        assert meses == sorted(meses, reverse=True)
+
+    def test_filtro_fornecedor_id(self, client, headers):
+        r = client.get("/logistico/historico?fornecedor_id=2", headers=headers)
+        assert r.status_code == 200
+        assert len(r.json()) >= 1
+        for h in r.json():
+            assert h["fornecedor_id"] == 2
+
+    def test_filtro_tipo_insumo(self, client, headers):
+        r = client.get("/logistico/historico?tipo_insumo=cimento", headers=headers)
+        assert r.status_code == 200
+        assert len(r.json()) >= 1
+        for h in r.json():
+            assert h["tipo_insumo"] == "cimento"
+
+    def test_sem_token_retorna_403(self, client):
+        r = client.get("/logistico/historico")
+        assert r.status_code == 403
+
+
+# =============================================================================
+# FASE 2 — Paginação (skip/limit em endpoints de listagem)
+# =============================================================================
+
+class TestPaginacao:
+    def test_limit_restringe_resultado(self, client, headers):
+        r = client.get("/logistico/pedidos?limit=1", headers=headers)
+        assert r.status_code == 200
+        assert len(r.json()) <= 1
+
+    def test_skip_avanca_registros(self, client, headers):
+        todos    = client.get("/logistico/historico", headers=headers).json()
+        pagina_2 = client.get("/logistico/historico?skip=2", headers=headers).json()
+        assert pagina_2 == todos[2:]
+
+    def test_limit_zero_retorna_422(self, client, headers):
+        r = client.get("/core/obras?limit=0", headers=headers)
+        assert r.status_code == 422
+
+    def test_limit_acima_do_teto_retorna_422(self, client, headers):
+        r = client.get("/core/obras?limit=501", headers=headers)
+        assert r.status_code == 422
+
+
+# =============================================================================
+# FASE 2 — Sessão (GET /auth/me)
+# =============================================================================
+
+class TestAuthMe:
+    def test_me_retorna_usuario_do_token(self, client, headers):
+        r = client.get("/auth/me", headers=headers)
+        assert r.status_code == 200
+        data = r.json()
+        assert data["email"]  == "gestor@empresa.com"
+        assert data["perfil"] == "gestor"
+        assert data["ativo"] is True
+        assert "senha" not in data and "senha_hash" not in data
+
+    def test_me_sem_token_retorna_403(self, client):
+        r = client.get("/auth/me")
+        assert r.status_code == 403
+
+
+# =============================================================================
+# FASE 2 — Rate limiting no login
+# =============================================================================
+
+class TestRateLimitLogin:
+    def test_sexta_tentativa_falha_retorna_429(self, client):
+        # E-mail dedicado — não interfere nos usuários usados pelos demais testes
+        payload = {"email": "bruteforce@test.com", "senha": "senha_errada"}
+        for _ in range(5):
+            r = client.post("/auth/login", json=payload)
+            assert r.status_code == 401
+        r = client.post("/auth/login", json=payload)
+        assert r.status_code == 429
+
+    def test_login_correto_zera_o_contador(self, client):
+        errado  = {"email": "operador@empresa.com", "senha": "senha_errada"}
+        correto = {"email": "operador@empresa.com", "senha": "123456"}
+
+        for _ in range(4):
+            assert client.post("/auth/login", json=errado).status_code == 401
+
+        # Sucesso antes do bloqueio → contador zerado
+        assert client.post("/auth/login", json=correto).status_code == 200
+
+        # Nova falha volta a contar do zero (401, não 429)
+        assert client.post("/auth/login", json=errado).status_code == 401
+
+
+# =============================================================================
+# FASE 2 — Notificações (alertas logísticos + candidatos disponíveis)
+# =============================================================================
+
+class TestNotificacoes:
+    def test_alertas_email_retorna_estrutura(self, client, headers):
+        r = client.get("/notificacoes/alertas-email", headers=headers)
+        assert r.status_code == 200
+        for email in r.json():
+            assert "assunto"      in email
+            assert "destinatario" in email
+            assert "corpo"        in email
+
+    def test_vaga_com_candidato_compativel_gera_email(self, client, headers):
+        # Vaga e candidato com habilidades idênticas → score 100 (>= 60)
+        r_vaga = client.post(
+            "/rh/vagas",
+            json={
+                "titulo":      "Vaga Alerta RH Test",
+                "tipo_obra":   "industrial",
+                "requisitos":  "soldagem",
+                "habilidades": "soldagem, topografia, drywall",
+            },
+            headers=headers,
+        )
+        assert r_vaga.status_code == 201
+        vaga_id = r_vaga.json()["id"]
+
+        r_cand = client.post(
+            "/rh/candidatos",
+            json={
+                "nome":             "Candidato Alerta RH",
+                "email":            "alerta.rh@test.com",
+                "cargo":            "soldador",
+                "experiencia_anos": 8,
+                "habilidades":      "soldagem, topografia, drywall",
+            },
+            headers=headers,
+        )
+        assert r_cand.status_code == 201
+
+        r = client.get("/notificacoes/alertas-email", headers=headers)
+        assert r.status_code == 200
+        assuntos = [e["assunto"] for e in r.json()]
+        assert "Candidatos disponíveis — Vaga Alerta RH Test" in assuntos
+
+        corpo = next(
+            e["corpo"] for e in r.json()
+            if e["assunto"] == "Candidatos disponíveis — Vaga Alerta RH Test"
+        )
+        assert "Candidato Alerta RH" in corpo
+
+        # Vaga encerrada não gera mais alerta
+        r_upd = client.put(
+            f"/rh/vagas/{vaga_id}", json={"status": "encerrada"}, headers=headers,
+        )
+        assert r_upd.status_code == 200
+
+        r2 = client.get("/notificacoes/alertas-email", headers=headers)
+        assuntos2 = [e["assunto"] for e in r2.json()]
+        assert "Candidatos disponíveis — Vaga Alerta RH Test" not in assuntos2
+
+    def test_enviar_alertas_simulados(self, client, headers):
+        r = client.post("/notificacoes/enviar-alertas-simulados", headers=headers)
+        assert r.status_code == 200
+        data = r.json()
+        assert "total_alertas"     in data
+        assert "enviados_por_smtp" in data
+        # Sem SMTP configurado nos testes, nada é enviado de verdade
+        assert data["enviados_por_smtp"] == 0
+
+    def test_perfil_rh_nao_acessa_notificacoes(self, client):
+        r_login = client.post(
+            "/auth/login", json={"email": "rh@empresa.com", "senha": "123456"},
+        )
+        assert r_login.status_code == 200
+        headers_rh = {"Authorization": f"Bearer {r_login.json()['access_token']}"}
+
+        r = client.get("/notificacoes/alertas-email", headers=headers_rh)
+        assert r.status_code == 403
